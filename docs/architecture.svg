@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 720" role="img" aria-labelledby="archTitle archDesc">
+  <title id="archTitle">Audit Log Service high-level architecture</title>
+  <desc id="archDesc">API controllers call domain services, which persist through AuditRecordRepository to PostgreSQL.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+    <filter id="shadow" x="-4%" y="-4%" width="108%" height="112%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#0f172a" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <rect width="1000" height="720" fill="#f8fafc"/>
+
+  <!-- API layer -->
+  <rect x="28" y="20" width="944" height="168" rx="16" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="48" y="50" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="700" letter-spacing="0.08em" fill="#1d4ed8">API LAYER</text>
+
+  <g font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="600" fill="#1e3a8a" text-anchor="middle">
+    <rect x="48" y="70" width="168" height="92" rx="10" fill="#ffffff" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="132" y="110"><tspan x="132">AuditWrite</tspan><tspan x="132" dy="18">Controller</tspan></text>
+
+    <rect x="232" y="70" width="168" height="92" rx="10" fill="#ffffff" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="316" y="110"><tspan x="316">AuditQuery</tspan><tspan x="316" dy="18">Controller</tspan></text>
+
+    <rect x="416" y="70" width="168" height="92" rx="10" fill="#ffffff" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="500" y="110"><tspan x="500">AuditVerify</tspan><tspan x="500" dy="18">Controller</tspan></text>
+
+    <rect x="600" y="70" width="168" height="92" rx="10" fill="#ffffff" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="684" y="110"><tspan x="684">AuditExport</tspan><tspan x="684" dy="18">Controller</tspan></text>
+
+    <rect x="784" y="70" width="168" height="92" rx="10" fill="#ffffff" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="868" y="110"><tspan x="868">ComplianceReport</tspan><tspan x="868" dy="18">Controller</tspan></text>
+  </g>
+
+  <!-- Domain layer -->
+  <rect x="28" y="268" width="944" height="168" rx="16" fill="#ecfdf5" stroke="#6ee7b7" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="48" y="298" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="700" letter-spacing="0.08em" fill="#047857">DOMAIN LAYER</text>
+
+  <g font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="600" fill="#065f46" text-anchor="middle">
+    <rect x="48" y="318" width="168" height="92" rx="10" fill="#ffffff" stroke="#10b981" stroke-width="1.5"/>
+    <text x="132" y="358"><tspan x="132">HashChain</tspan><tspan x="132" dy="18">Service</tspan></text>
+
+    <rect x="232" y="318" width="168" height="92" rx="10" fill="#ffffff" stroke="#10b981" stroke-width="1.5"/>
+    <text x="316" y="358"><tspan x="316">Redaction</tspan><tspan x="316" dy="18">Service</tspan></text>
+
+    <rect x="416" y="318" width="168" height="92" rx="10" fill="#ffffff" stroke="#10b981" stroke-width="1.5"/>
+    <text x="500" y="348"><tspan x="500">Retention</tspan><tspan x="500" dy="18">Service</tspan></text>
+    <text x="500" y="390" font-size="10" font-weight="500" fill="#047857">(scheduled)</text>
+
+    <rect x="600" y="318" width="168" height="92" rx="10" fill="#ffffff" stroke="#10b981" stroke-width="1.5"/>
+    <text x="684" y="358"><tspan x="684">ExportBundle</tspan><tspan x="684" dy="18">Service</tspan></text>
+
+    <rect x="784" y="318" width="168" height="92" rx="10" fill="#ffffff" stroke="#10b981" stroke-width="1.5"/>
+    <text x="868" y="358"><tspan x="868">ComplianceReport</tspan><tspan x="868" dy="18">Service</tspan></text>
+  </g>
+
+  <!-- Infrastructure layer -->
+  <rect x="28" y="516" width="944" height="180" rx="16" fill="#fffbeb" stroke="#fcd34d" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="48" y="546" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="700" letter-spacing="0.08em" fill="#b45309">INFRASTRUCTURE</text>
+
+  <rect x="220" y="572" width="260" height="80" rx="10" fill="#ffffff" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="350" y="618" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="600" fill="#92400e">AuditRecordRepository</text>
+
+  <!-- PostgreSQL cylinder -->
+  <g transform="translate(620,568)">
+    <ellipse cx="90" cy="16" rx="90" ry="16" fill="#e0e7ff" stroke="#4f46e5" stroke-width="1.5"/>
+    <rect x="0" y="16" width="180" height="52" fill="#e0e7ff" stroke="none"/>
+    <line x1="0" y1="16" x2="0" y2="68" stroke="#4f46e5" stroke-width="1.5"/>
+    <line x1="180" y1="16" x2="180" y2="68" stroke="#4f46e5" stroke-width="1.5"/>
+    <ellipse cx="90" cy="68" rx="90" ry="16" fill="#c7d2fe" stroke="#4f46e5" stroke-width="1.5"/>
+    <text x="90" y="50" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="600" fill="#3730a3">PostgreSQL</text>
+  </g>
+
+  <!-- Connectors: API -> Domain -->
+  <g fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)">
+    <!-- Write -> HashChain -->
+    <path d="M132 162 V318"/>
+    <!-- Query -> Redaction -->
+    <path d="M316 162 V318"/>
+    <!-- Query -> Repository (offset left) -->
+    <path d="M250 116 H200 V590 H220"/>
+    <!-- Verify -> HashChain -->
+    <path d="M500 162 V200 H132 V318"/>
+    <!-- Export -> ExportBundle -->
+    <path d="M684 162 V318"/>
+    <!-- Report -> ComplianceReport -->
+    <path d="M868 162 V318"/>
+
+    <!-- ExportBundle -> HashChain -->
+    <path d="M600 364 H216"/>
+
+    <!-- Domain -> Repository collector -->
+    <path d="M132 410 V500 H350 V572"/>
+    <path d="M316 410 V480 H350"/>
+    <path d="M500 410 V480 H350"/>
+    <path d="M868 410 V500 H350"/>
+
+    <!-- Repository -> PostgreSQL -->
+    <path d="M480 612 H620"/>
+  </g>
+</svg>

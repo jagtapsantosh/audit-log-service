@@ -1,0 +1,60 @@
+# AI Usage Log
+
+Traceability of AI-assisted work. Append an entry per task. Engineer owns all accepted output.
+
+Format:
+
+```
+## [YYYY-MM-DD] Task: <name>
+- Prompt: ...
+- Accepted: ...
+- Modified: ...
+- Rejected: ...
+- Rationale: ...
+```
+
+---
+
+## [2026-08-14] Task: Implementation plan from assignment spec
+
+- Prompt: Create a detailed implementation plan from the audit log service assessment PDF. Chose Java + Spring Boot + PostgreSQL; cover Scenarios A, B, and C.
+- Accepted: Layered API / domain / persistence design; global SHA-256 chain; server-assigned timestamps; Flyway V1/V2; Testcontainers; deliverable file list matching §7 of the assignment.
+- Modified: Tightened hash canonicalization (sorted keys, UTF-8, no whitespace) and concurrent-write locking after reviewing race conditions on `previousHash`.
+- Rejected: Python/FastAPI and Node stacks (engineer chose Java). Per-resource sub-chains (verify/export harder). SHA-512 (no benefit for this threat model). Hard-delete retention (false verify breaks).
+- Rationale: Assignment scores engineering judgment and AI process, not only code. Plan had to freeze trade-offs before implementation.
+
+---
+
+## [2026-08-14] Task: Repository bootstrap
+
+- Prompt: Create empty repo `audit-log-service` with `IMPLEMENTATION_PLAN.md`, empty `ATTESTATION.md` and `README.md`.
+- Accepted: Git repo on `main`; plan copied in full; attestation later filled with name/email/start date.
+- Modified: None material.
+- Rejected: Committing immediately (engineer did not request a commit). Scaffolding application code in the same step (plan-only repo first).
+- Rationale: Assignment wants history from analysis through implementation. Empty-then-fill is an honest first commit shape.
+
+---
+
+## [2026-08-14] Task: Architecture diagram visibility
+
+- Prompt: Why the architecture diagram in `IMPLEMENTATION_PLAN.md` was not visible; fix it.
+- Accepted: Hand-authored SVG at `docs/architecture.svg`; markdown image embed; Mermaid kept as collapsed source with quoted subgraph titles.
+- Modified: Removed a Cursor-specific explanation that did not belong in an assignment document.
+- Rejected: Figma `generate_diagram` (wrong artifact; reviewers read the repo, not FigJam). Mermaid-only fix (Cursor/VS Code preview still would not draw it).
+- Rationale: Reviewers and local preview both need a real image; Mermaid remains editable source.
+
+---
+
+## [2026-08-14] Task: docs/ implementation-requirement files
+
+- Prompt: Create `ARCHITECTURE.md`, `SCENARIO_A.md`, `SCENARIO_B.md`, `SCENARIO_C.md`, `AI_USAGE_LOG.md`, `ENGINEERING_SUMMARY.md` with implementation-requirement detail from the plan.
+- Accepted: Six files as named in the repo layout; Scenario C clarification written **before** compliance code; redaction overlay vs re-hash documented as a rejected alternative.
+- Modified: Canonical hash field set specified as API names with lexicographic key order (not DB column names). Export verifier semantics: `bundleHash` protects the file; per-record hashes cannot be recomputed from redacted payloads.
+- Rejected: Pretending implementation was already done. Filling Scenario C with SSO/PDF to look complete.
+- Rationale: Assignment requires architecture, three scenario write-ups, AI traceability, and an engineering summary in the repository — not only a plan file.
+
+---
+
+## Later entries
+
+Append here during bootstrap, hash-chain implementation, tests, redaction, export, and compliance work. For each: what was prompted, what was kept, what was edited, what was thrown away, and why.

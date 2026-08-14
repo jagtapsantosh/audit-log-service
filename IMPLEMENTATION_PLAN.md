@@ -10,9 +10,14 @@ The assignment evaluates **engineering judgment + AI-assisted execution**, not j
 
 ## High-Level Architecture
 
+![Audit Log Service high-level architecture](docs/architecture.svg)
+
+<details>
+<summary>Mermaid source</summary>
+
 ```mermaid
 flowchart TB
-    subgraph api [API Layer]
+    subgraph api["API Layer"]
         WriteCtrl[AuditWriteController]
         QueryCtrl[AuditQueryController]
         VerifyCtrl[AuditVerifyController]
@@ -20,7 +25,7 @@ flowchart TB
         ReportCtrl[ComplianceReportController]
     end
 
-    subgraph domain [Domain Layer]
+    subgraph domain["Domain Layer"]
         HashSvc[HashChainService]
         RetentionSvc[RetentionService]
         RedactionSvc[RedactionService]
@@ -28,7 +33,7 @@ flowchart TB
         ReportSvc[ComplianceReportService]
     end
 
-    subgraph infra [Infrastructure]
+    subgraph infra["Infrastructure"]
         Repo[AuditRecordRepository]
         PG[(PostgreSQL)]
     end
@@ -47,6 +52,8 @@ flowchart TB
     ReportSvc --> Repo
     Repo --> PG
 ```
+
+</details>
 
 ---
 

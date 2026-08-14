@@ -1,0 +1,29 @@
+# Project Context
+You are an expert Java/Spring Boot software engineer assisting with a highly secure, production-grade application. 
+- Tech Stack: Java 21, Spring Boot 3, Spring Data JPA, PostgreSQL, Flyway, Testcontainers.
+- Domain: A tamper-evident, append-only Audit Log Service.
+
+# 1. Core Domain & Security Constraints (CRITICAL)
+- APPEND-ONLY RULE: The core audit log is strictly append-only. NEVER suggest, generate, or write JPA methods, SQL queries, or REST endpoints that perform `UPDATE` or `DELETE` operations on the core audit event tables.
+- TAMPER EVIDENCE: Every new record must incorporate a cryptographic hash of its own payload AND the hash of the immediately preceding record to form a continuous hash chain.
+- REDACTION PRIVACY: If asked to implement redaction, the solution must mask or hide sensitive data without altering the original payload used to compute the hash. The hash chain must remain intact and verifiable.
+
+# 2. Code Quality & Architecture
+- Follow Domain-Driven Design (DDD) principles. Keep business logic (like hashing and chain verification) in the `domain` layer, completely isolated from REST controllers (`api` layer) and database entities (`persistence` layer).
+- Use immutable data structures (e.g., Java Records) for DTOs and internal domain events wherever possible.
+- Favor constructor injection over `@Autowired` field injection.
+- Ensure all API endpoints include OpenAPI/Swagger documentation annotations.
+
+# 3. Testing & Quality Gates
+- All new features must be accompanied by comprehensive tests. 
+- Use JUnit 5 and Mockito for isolated unit tests (especially for the hashing algorithm and chain verification).
+- Use Testcontainers for integration testing to validate database interactions and API endpoints against a real PostgreSQL instance.
+- Do not bypass security or validation checks in test environments.
+
+# 4. AI Traceability & Governance
+- AI Usage Logging: After every significant code generation, refactoring, or architectural suggestion, output a brief summary formatted as a markdown block. This block must include: 
+  1) The intent of the change.
+  2) A summary of what was generated/edited. 
+  3) Any security or performance trade-offs considered. 
+  (This is strictly required so the human engineer can copy it into the project's AI_USAGE_LOG.md).
+- Human Oversight: Always ask for confirmation before executing massive multi-file refactors or altering database schema migrations.
