@@ -19,7 +19,7 @@ Config: `audit.retention.days` (default **365**). A scheduled job (and `POST /au
 - Default `GET /audit/events` excludes `ARCHIVED` unless `includeArchived=true`.
 - Verify walks **all** rows (`ACTIVE` + `ARCHIVED`) by `sequence_num`. Archived links stay in the chain.
 
-Flyway `V2__retention_and_redaction.sql`: `status`, `archived_at` on `audit_records`.
+Flyway `V2__retention_and_redaction.sql`: `status`, `archived_at`, `has_redactions` on `audit_records`, plus table `audit_redactions`. Archive only updates `status` / `archived_at` — never hashed payload, hashes, or clocks. The append-only trigger must allow that for the app role while still blocking hashed-column UPDATE/DELETE.
 
 ### Trade-offs
 
@@ -115,14 +115,21 @@ audit_redactions (
 }
 ```
 
-**Recipient verify (`ExportVerifier`):** recompute `bundleHash`; for each record recompute `contentHash` from **redacted** payload only if we also include original hashes — **do not**. Hashes were computed on original payload. The bundle is evidence that **exported bytes** were not altered after export (`bundleHash`). Full chain integrity of originals remains `GET /audit/verify` on the service (which still has plaintext).
+**Export is a subsequence, not a mini-chain.** `GET /audit/export?actorId=` (or resource) is a **sparse slice** of the **global** chain. `previousHash` often points at a record **not** in the file. Sequence gaps are expected. The PDF asks that the bundle prove records **have not been altered since export**, not that a recipient can replay `/audit/verify`.
 
-Document this split clearly in README:
+`ExportVerifier` (standalone Java + README algorithm):
+
+1. Recompute `bundleHash` over canonical `exportVersion` + `exportedAt` + `filter` + `genesisHash` + `records`. Mismatch → tampered since export.
+2. Per-record `contentHash` / `previousHash` are copies of server values.
+3. Recompute `contentHash` **only** when `redactedFields` is empty (payload is unredacted).
+4. Do **not** fail because sequence numbers have gaps.
+
+Full chain integrity remains `GET /audit/verify` on the service (plaintext still in the DB).
+
+Document this split in README:
 
 - `bundleHash` → bundle not altered since export.
-- Per-record `contentHash` / `previousHash` are the server’s committed values; a recipient **cannot** recompute them from redacted payload. They can still detect bundle-level tampering and compare hashes to a later service verify if they have access.
-
-If a record has no redactions, the recipient **can** recompute `contentHash` from the payload in the bundle.
+- Redacted payloads cannot recompute per-record hashes; unredacted records can.
 
 ---
 
@@ -134,7 +141,7 @@ If a record has no redactions, the recipient **can** recompute `contentHash` fro
 | B2 | `RetentionService` + admin/cron | B1 | Records past window become ARCHIVED; verify still intact; archive endpoint JWT `audit.admin` only |
 | B3 | Query `includeArchived` | B2 | Default hides archived |
 | B4 | `RedactionService` + POST redact | B1 | Query shows `[REDACTED]`; verify intact; SQL tamper still detected; redact is JWT `audit.admin` |
-| B5 | Export + `ExportVerifier` | B4 | Bundle downloads; `bundleHash` matches; metadata includes `redactedFields` |
+| B5 | Export + `ExportVerifier` | B4 | Bundle downloads; `bundleHash` matches; gaps in `sequence` do not fail; unredacted records re-hash; redacted ones skip content re-hash |
 
 ---
 
@@ -144,4 +151,4 @@ If a record has no redactions, the recipient **can** recompute `contentHash` fro
 - API key on redact or archive → 403.
 - Redact `accountNumber`; GET event shows `[REDACTED]`; verify intact.
 - SQL `UPDATE` of original payload still yields `CONTENT_HASH_MISMATCH`.
-- Export for an actor; `ExportVerifier` accepts; after editing the file, `bundleHash` fails.
+- Export for an actor (sparse sequences); `ExportVerifier` accepts despite gaps; after editing the file, `bundleHash` fails.

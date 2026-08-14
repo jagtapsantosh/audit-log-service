@@ -18,6 +18,10 @@ spring:
   jackson:
     serialization:
       write-dates-as-timestamps: false
+    deserialization:
+      # Reject unknown request fields so a caller cannot believe it supplied a sequence number,
+      # ingest timestamp, or hash. Those are server-assigned.
+      fail-on-unknown-properties: true
 
 server:
   port: 8080

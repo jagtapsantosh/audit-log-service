@@ -63,11 +63,14 @@ class SecurityFlowIT {
 
     @Test
     void ingestApiKeyIsAcceptedForWritePath() throws Exception {
+        // Authorized but empty body: the request reaches validation, which is what proves the key
+        // satisfied audit.write rather than being rejected by the filter chain.
         mockMvc.perform(post("/audit/events")
                         .header("X-API-Key", INGEST_KEY)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
     }
 
     @Test
@@ -92,7 +95,31 @@ class SecurityFlowIT {
         String token = body.get("access_token").asText();
 
         mockMvc.perform(get("/audit/verify").header("Authorization", "Bearer " + token))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.intact").value(true));
+    }
+
+    @Test
+    void jwtWithoutWriteScopeCannotAppend() throws Exception {
+        MvcResult result = mockMvc.perform(post("/auth/token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"client_id":"ops-admin","client_secret":"ops-admin-secret-dev","scope":"audit.read"}
+                                """))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String token = objectMapper.readTree(result.getResponse().getContentAsString())
+                .get("access_token")
+                .asText();
+
+        mockMvc.perform(post("/audit/events")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"eventType":"USER_LOGIN","actorId":"user-1","resourceType":"SESSION",\
+                                "resourceId":"sess-1","occurredAt":"2026-08-14T11:30:00Z"}"""))
+                .andExpect(status().isForbidden());
     }
 
     @Test

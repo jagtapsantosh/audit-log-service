@@ -17,3 +17,7 @@ bin/
 *.hprof
 hs_err_pid*
 replay_pid*
+
+# Confidential assignment brief: kept locally, never in the submitted repository (§0.2)
+Interview_Assignment_Audit_Log_Service.pdf
+*.pdf

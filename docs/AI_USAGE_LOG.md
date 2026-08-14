@@ -95,6 +95,41 @@ Format:
 
 ---
 
+## [2026-08-14] Task: Pre-implementation freeze
+
+- Prompt: Freeze critical gaps in the plan before Scenario A–C APIs (export subsequence, evaluator tamper script, append-only vs superuser, canonical JSON, complete V2 SQL, submission process).
+- Accepted: `bundleHash` as tamper-since-export; `ExportVerifier` does not fail on sequence gaps and only recomputes `contentHash` when unredacted; empty-chain verify `intact: true` / `totalRecords: 0`; Flyway trigger for app role with `postgres` superuser tamper in README; Jackson sorted keys + `JsonNode` payload + Instant `toString` + golden hex; V2 SQL aligned with ARCHITECTURE (`has_redactions`, `audit_redactions`); commit per working slice; no assignment PDF in the shared repo; attestation date at the end; `./gradlew test` as quality gate.
+- Modified: IMPLEMENTATION_PLAN V2 was only `status`/`archived_at` — completed to match ARCHITECTURE. Timeline marked bootstrap + auth done; next step is A APIs.
+- Rejected: Per-resource chains, merkle/JWS reports, regulator SSO/JWKS, verify checkpoints, GitHub Actions now, updating `architecture.svg` unless controller names change.
+- Rationale: The PDF scores judgment + process. Coding write/query/verify before freezing export/verify/trigger rules would overbuild a mini-chain or flake on JSON / empty verify / a trigger that blocks the assigned SQL tamper.
+
+---
+
+## [2026-08-14] Task: Implement Scenario A (write, query, verify, tamper tests)
+
+- Prompt: Implement Scenario A following the frozen plan and scenario docs.
+- Accepted: `CanonicalJson` + `HashChainService` with a golden vector; `AuditRecordStore` port so the domain does not depend on JPA; entity with every column `updatable = false`; repository extending bare `Repository` (no delete reachable); advisory lock before reading the chain head; keyset-paged verify with first-violation-only reporting; write/query/verify controllers with OpenAPI annotations; one error envelope; Micrometer counters/timer from ARCHITECTURE; 66 tests (unit + Testcontainers) including the assignment's SQL-tamper script.
+- Modified: three corrections the AI's first pass got wrong or under-specified, each found by running the code rather than by review:
+  1. **Numbers.** The plan said "hash payload as `JsonNode`", which is necessary but not sufficient: PostgreSQL `jsonb` re-renders `1e2` as `100`, so an honest record could fail verification after a round trip. Canonical numbers are now plain decimal with trailing zeros stripped.
+  2. **Clock precision.** `timestamptz` keeps microseconds, so hashing a nanosecond `Instant` would break verify on re-read. Both clocks are truncated to microseconds before hashing.
+  3. **Filter SQL.** The generated `:param IS NULL OR column = :param` pattern failed at runtime (`could not determine data type of parameter $9`); replaced with `column = COALESCE(:param, column)`, which is valid because these columns are NOT NULL.
+- Also modified: `SecurityFlowIT` placeholders that asserted 404 for write/verify now assert real behaviour (400 validation, 200 intact), plus a new test that a read-only JWT cannot append. Added `timestamp` as a `@JsonAlias` for `occurredAt` so the PDF's field name works verbatim.
+- Rejected: `JpaRepository` (exposes `delete*`); a DB trigger in Scenario A (would block the assignment's required SQL tamper, since compose runs the app and `psql` as the same role — deferred to B with a role split); returning a non-200 status for a broken chain (the report succeeded); verify checkpoints; per-resource chains.
+- Rationale: the hash chain is only as trustworthy as its determinism, so the risky work was canonicalization and the write lock, not the controllers. Both hazards found above would have produced *false* tamper alerts in a demo — the worst possible failure for this service — so they are covered by named unit tests and asserted again through a real database.
+
+---
+
+## [2026-08-14] Task: End-to-end validation of Scenario A against the specification
+
+- Prompt: Have you implemented Scenario A fully? Validate it end to end against the requirements and the plan.
+- Accepted: the implementation as built. Forced a real test run (`cleanTest test`, since the previous run was served from the Gradle cache): 66 tests, no failures, no skips. Ran the README script verbatim against a freshly reset stack — empty-chain verify, three appends linking from genesis, filtered query, intact verify, `UPDATE` of one payload in `psql`, then verify naming sequence 2 and `CONTENT_HASH_MISMATCH`. Confirmed each contract claim independently: the `timestamp` alias, unknown-field rejection, non-object payload, blank field, future-clock rejection, every filter alone and combined, inclusive `from`/`to`, the 200 page cap, and the 401/403/405 matrix.
+- Modified: documented one gap this pass exposed. A payload of `{"n":1.50,"m":1e2,"z":{"b":2,"a":1}}` survived the `jsonb` round trip (stored as `100` / `1.5`, keys reordered) with verify still intact, so canonicalization holds against a real database. But probing beyond the assignment's script showed that deleting the **newest** record leaves `intact: true`: the surviving prefix is self-consistent, so a chain walk has nothing to catch. Interior deletes, clock edits, field edits, and rewritten links were all caught. Recorded as a named limitation and risk in `ENGINEERING_SUMMARY.md` and as a detection boundary in `SCENARIO_A.md`, with the mitigation path (an off-box head anchor) stated rather than built.
+- Also modified: untracked the confidential assignment PDF (`git rm --cached`) and added a `.gitignore` rule. It had been committed in `3e21120`, and §0.2 forbids re-hosting it in a repository that §7 requires sharing with the panel. The blob remains reachable in history; removing it there needs a rewrite and was deliberately left to the engineer.
+- Rejected: implementing a head-anchor or verify checkpoints now (scope creep into B, and an anchor the same DBA can rewrite buys little without an external sink); a live 25-writer burst against the running app, since `ConcurrentAppendIT` already proves the lock over real parallel HTTP; editing `IMPLEMENTATION_PLAN.md` to record any of this, because the plan is frozen.
+- Rationale: a green suite only proves the assertions someone thought to write, so the value of this pass was in the checks nobody had written — `jsonb` number re-rendering through the real database, and delete shapes the assignment's single-UPDATE script never exercises. The truncation gap is worth stating plainly: the service detects modification of what it holds, and cannot by itself prove that nothing was removed from the end.
+
+---
+
 ## Later entries
 
-Append here during bootstrap, hash-chain implementation, tests, redaction, export, and compliance work. For each: what was prompted, what was kept, what was edited, what was thrown away, and why.
+Append here during retention, redaction, export, and compliance work. For each: what was prompted, what was kept, what was edited, what was thrown away, and why.

@@ -97,9 +97,9 @@ audit-log-service/
 | Hash algorithm | **SHA-256** over canonical JSON | Industry standard, built into Java `MessageDigest` |
 | Chain scope | **Global sequential chain** (single monotonic `sequence` per record) | Simplest tamper detection; every record links to predecessor |
 | Genesis value | Constant `000...000` (64 hex zeros) | Explicit, verifiable first-link |
-| Canonicalization | Sorted JSON keys, UTF-8, no whitespace | Deterministic re-hash on verify |
+| Canonicalization | Sorted JSON keys, UTF-8, no whitespace; payload as `JsonNode` | Deterministic re-hash on verify; avoid `Double` vs int |
 | Storage | PostgreSQL `JSONB` for payload | Queryable + structured redaction |
-| Append-only enforcement | No update/delete repository methods; DB trigger optional | API + persistence layer guardrails |
+| Append-only enforcement | No update/delete repo methods; trigger rejects hashed-column writes for the **app role**; `postgres` superuser can still UPDATE for the assigned tamper demo | API + DB guardrails without blocking §5 A validation |
 
 ### Hash Chain Formula
 
@@ -113,7 +113,17 @@ contentHash = SHA-256(canonical({
 previousHash = contentHash of record (n-1), or GENESIS for n=1
 ```
 
-Verification walks records ordered by `sequence ASC`, recomputes each `contentHash`, checks `previousHash` linkage, and stops at first violation.
+**Canonical JSON (frozen for `HashChainService`):**
+
+- Jackson: recursively sorted object keys, no pretty print, `WRITE_DATES_AS_TIMESTAMPS: false`.
+- `Instant` → `Instant.toString()` (ISO-8601 with `Z`).
+- Hash payload as `JsonNode` (do not round-trip through `Map<String,Object>` / `Double`).
+- Missing/null payload → `{}`; payload must be a JSON object.
+- Golden unit test: known canonical object → known SHA-256 hex (computed outside the codebase).
+
+Verification walks records ordered by `sequence ASC`, recomputes each `contentHash`, checks `previousHash` linkage, and stops at first violation. Empty chain: `intact: true`, `totalRecords: 0`. Walk is O(n); no checkpoints in this prototype.
+
+Use a **pessimistic lock** (`pg_advisory_xact_lock` or `SELECT ... FOR UPDATE` on a chain-head row) when appending so two writers cannot share `previousHash`.
 
 ---
 
@@ -143,7 +153,11 @@ CREATE INDEX idx_audit_occurred_at ON audit_records(occurred_at);
 CREATE INDEX idx_audit_recorded_at ON audit_records(recorded_at);
 ```
 
-Use a **pessimistic lock** (`SELECT ... FOR UPDATE` on a chain-head row or advisory lock) when appending to prevent concurrent write race conditions on `previousHash`.
+Use a **pessimistic lock** (`pg_advisory_xact_lock` or `SELECT ... FOR UPDATE` on a chain-head row) when appending to prevent concurrent write race conditions on `previousHash`.
+
+**Append-only enforcement:** no update/delete repository methods, no mapped `PUT`/`DELETE`, and hashed columns mapped as non-updatable.
+
+**Append-only vs assigned tamper demo:** a Flyway trigger rejecting UPDATE/DELETE of hashed columns must target the **application** DB role only, because the §5 A validation script requires a privileged role to still rewrite a row via SQL. Scenario B archive/redaction never rewrites hashed payload — only `status` / overlay rows.
 
 ### A2. REST API
 
@@ -189,16 +203,19 @@ Use a **pessimistic lock** (`SELECT ... FOR UPDATE` on a chain-head row or advis
 
 Violation types: `CONTENT_HASH_MISMATCH`, `PREVIOUS_HASH_BREAK`, `SEQUENCE_GAP`.
 
+Empty chain (JWT, no rows): `{ "intact": true, "totalRecords": 0 }` with no `firstViolation`.
+
 ### A3. Implementation Tasks (ordered)
 
-1. **Bootstrap** — Spring Boot project, Docker Compose Postgres, Flyway, health check
-2. **`HashChainService`** — canonical JSON serialization, SHA-256, genesis handling
-3. **`AuditWriteService`** — transactional append with sequence assignment + locking
-4. **`AuditQueryService`** — dynamic JPA Specification / native query for filters
-5. **`AuditVerifyService`** — full-chain walk with detailed first-violation reporting
-6. **Controllers + validation** — `@Valid` DTOs, `@ControllerAdvice` error handling
-7. **OpenAPI** — SpringDoc at `/swagger-ui.html` (bearer + apiKey schemes)
-8. **Security** — Spring Security hybrid: API keys + JWT resource server (implement with APIs, not as a separate freeze)
+1. **Bootstrap** — Gradle, Docker Compose, Flyway V1, health
+2. **Security** — API keys + JWT `POST /auth/token`
+3. **`CanonicalJson` + `HashChainService`** — canonical serialization, SHA-256, genesis, golden vector
+4. **`AuditWriteService`** — transactional append; advisory lock before reading the head
+5. **`AuditQueryService`** — optional filters; paging clamped to 200
+6. **`AuditVerifyService`** — keyset-paged chain walk, first-violation reporting, empty chain intact
+7. **Controllers + validation** — `@Valid` DTOs, unknown fields rejected, single error envelope
+8. **OpenAPI** — SpringDoc at `/swagger-ui.html` (bearer + apiKey schemes)
+9. **README evaluator script** — write (API key) → query → verify (JWT) → SQL tamper → verify break
 
 ### A4. Tests (Scenario A validation script)
 
@@ -208,16 +225,18 @@ Violation types: `CONTENT_HASH_MISMATCH`, `PREVIOUS_HASH_BREAK`, `SEQUENCE_GAP`.
 | Concurrent writes | Integration | 10 parallel POSTs; chain still intact |
 | Filter combinations | Integration | Each filter param works alone and combined |
 | Pagination | Integration | Stable ordering by `sequence_num` |
-| Tamper detection | Integration | `@Sql` or test helper UPDATEs `payload` in DB; verify reports break |
-| Hash unit tests | Unit | Known input → known hash; genesis link |
+| Hash unit tests | Unit | Known canonical object → known hex; genesis link |
+| Empty chain verify | Integration | JWT `/audit/verify` → intact, totalRecords 0 |
+| Tamper detection | Integration | Superuser/`@Sql` UPDATEs `payload`; verify reports `CONTENT_HASH_MISMATCH` at that sequence |
 
-**Manual validation flow** (document in README):
+**Manual validation flow** (README, implement with Scenario A APIs):
 
-1. POST several events
-2. GET with filters
-3. GET `/audit/verify` → intact
-4. Direct SQL tamper on a row
-5. GET `/audit/verify` → broken with sequence + violation type
+1. `POST /audit/events` with `X-API-Key: als_ingest_dev_key_do_not_use_in_prod` (several events)
+2. `GET /audit/events` with the same key and a filter
+3. `POST /auth/token` as `ops-admin`; `GET /audit/verify` with Bearer → `intact: true`
+4. Superuser tamper (app role must not be able to do this):
+   `docker compose exec postgres psql -U auditlog -d auditlog -c "UPDATE audit_records SET payload = '{\"tampered\":true}' WHERE sequence_num = 2;"`
+5. `GET /audit/verify` with Bearer → `intact: false`, `firstViolation.sequence` = 2, `CONTENT_HASH_MISMATCH`
 
 ---
 
@@ -232,6 +251,16 @@ Violation types: `CONTENT_HASH_MISMATCH`, `PREVIOUS_HASH_BREAK`, `SEQUENCE_GAP`.
 ```sql
 ALTER TABLE audit_records ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE';
 ALTER TABLE audit_records ADD COLUMN archived_at TIMESTAMPTZ;
+ALTER TABLE audit_records ADD COLUMN has_redactions BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE TABLE audit_redactions (
+  id               BIGSERIAL PRIMARY KEY,
+  audit_record_id  BIGINT NOT NULL REFERENCES audit_records(id),
+  field_path       VARCHAR(255) NOT NULL,
+  redacted_at      TIMESTAMPTZ NOT NULL,
+  redacted_by      VARCHAR(255) NOT NULL,
+  reason           VARCHAR(500)
+);
 ```
 
 - Default queries exclude `status = 'ARCHIVED'` unless `includeArchived=true`
@@ -292,11 +321,20 @@ audit_redactions (
       "redactedFields": ["accountNumber"]
     }
   ],
-  "bundleHash": "SHA-256 of canonical records array + metadata"
+  "bundleHash": "SHA-256 of canonical exportVersion+exportedAt+filter+genesisHash+records"
 }
 ```
 
-Provide a standalone **`ExportVerifier`** utility (Java class + documented algorithm in README) so a recipient can verify the bundle without running the full service.
+**Export is a subsequence, not a mini-chain.** Filter by `actorId` / `resourceId` returns a sparse slice of the **global** sequence. `previousHash` often points at a row **not** in the file. The PDF requires proving records **have not been altered since export**, not that a recipient can replay `/audit/verify`.
+
+`ExportVerifier` (standalone Java, documented in README):
+
+1. Recompute `bundleHash` over canonical metadata + records. Mismatch → bundle tampered since export.
+2. For each record with **empty** `redactedFields`, recompute `contentHash` from the payload in the file and compare to the copied server hash.
+3. Do **not** recompute `contentHash` from a redacted payload (hashes cover original JSONB).
+4. Do **not** fail because sequence numbers have gaps.
+
+Full chain integrity remains `GET /audit/verify` on the service.
 
 ---
 
@@ -416,39 +454,42 @@ Standard error envelope: `{ "error": "...", "code": "...", "timestamp": "..." }`
 
 ## Implementation Sequence (2–3 day timeline)
 
+Progress against this plan is tracked in `docs/ENGINEERING_SUMMARY.md`, not here.
+
 ```mermaid
 gantt
     title Audit Log Service Timeline
     dateFormat YYYY-MM-DD
     section Day1
-    Bootstrap_and_ScenarioA_Core     :d1, 2026-08-14, 1d
+    Bootstrap_and_ScenarioA_Core     :a, 2026-08-14, 1d
     section Day2
-    ScenarioA_Tests_and_Docs       :d2a, 2026-08-15, 0.5d
-    ScenarioB_Retention_Redaction    :d2b, 2026-08-15, 0.5d
+    ScenarioA_Tests_and_Docs         :b, 2026-08-15, 0.5d
+    ScenarioB_Retention_Redaction    :c, 2026-08-15, 0.5d
     section Day3
-    ScenarioB_Export                 :d3a, 2026-08-16, 0.25d
-    ScenarioC_Compliance             :d3b, 2026-08-16, 0.25d
-    Final_Docs_Attestation           :d3c, 2026-08-16, 0.25d
+    ScenarioB_Export                 :d, 2026-08-16, 0.25d
+    ScenarioC_Compliance             :e, 2026-08-16, 0.25d
+    Final_Docs_Attestation           :f, 2026-08-16, 0.25d
 ```
 
-### Day 1 — Scenario A (MVP)
+### Scenario A — core service
 
-- Project scaffold, Docker Compose, Flyway V1
+- Project scaffold, Docker Compose, Flyway V1, hybrid auth
 - Hash chain service + write/query/verify APIs
-- Basic integration tests including tamper detection
+- Integration tests including the assigned SQL tamper detection
 
-### Day 2 — Scenario A polish + Scenario B
+### Scenario B — retention, redaction, export
 
-- Pagination edge cases, OpenAPI, ARCHITECTURE.md
-- Retention (V2 migration, archive job, verify with archived records)
-- Redaction overlay + API
+- V2: `status`, `archived_at`, `has_redactions`, `audit_redactions`
+- Archive/redact (never rewrite hashed payload); export subsequence + `ExportVerifier`
+- App-role vs owner-role split, then the append-only trigger
 
-### Day 3 — Scenario B export + Scenario C + submission
+### Then Scenario C + submission
 
-- Bulk export + bundle verifier
-- Compliance report endpoints + SCENARIO_C.md clarification doc
-- AI_USAGE_LOG.md, ENGINEERING_SUMMARY.md, ATTESTATION.md
-- End-to-end manual validation script in README
+- Compliance report; seed 2–3 `CLIENT_ACCOUNT` access events
+- README, AI log, engineering summary; `ATTESTATION.md` date at the end
+- Do **not** add `Interview_Assignment_Audit_Log_Service.pdf` to the shared repo (§0.2 confidential)
+- Quality gate: `./gradlew test`. No GitHub Actions unless time remains
+- Keep write/query/verify in **services** (live defense: new filter or event type)
 
 ---
 
@@ -457,9 +498,11 @@ gantt
 | Risk | Mitigation |
 |------|------------|
 | Concurrent append breaks chain | DB advisory lock or chain-head row lock |
-| Non-deterministic JSON breaks verify | Canonical serializer with sorted keys; golden tests |
+| Non-deterministic JSON breaks verify | Frozen serializer (sorted keys, `JsonNode` payload, Instant `toString`); golden hex |
 | Redaction breaks hash chain | Never mutate hashed fields; overlay-only |
 | Retention causes false verify failures | Soft archive only; verify includes archived rows |
+| App-role trigger blocks assigned SQL tamper | Trigger for app role only; README uses `postgres` superuser |
+| Export filter looks like a broken mini-chain | `bundleHash` + subsequence rules; gaps are not a verify failure |
 | Scope creep on Scenario C | Document clarified requirement + explicit scope boundary |
 
 ---
