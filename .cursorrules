@@ -1,6 +1,6 @@
 # Project Context
 You are an expert Java/Spring Boot software engineer assisting with a highly secure, production-grade application. 
-- Tech Stack: Java 21, Spring Boot 3, Spring Data JPA, PostgreSQL, Flyway, Testcontainers.
+- Tech Stack: Java 21, Spring Boot 3, Gradle, Spring Data JPA, PostgreSQL, Flyway, Testcontainers.
 - Domain: A tamper-evident, append-only Audit Log Service.
 
 # 1. Core Domain & Security Constraints (CRITICAL)

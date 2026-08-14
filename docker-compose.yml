@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: auditlog
+      POSTGRES_USER: auditlog
+      POSTGRES_PASSWORD: auditlog
+    ports:
+      - "5432:5432"
+    volumes:
+      - auditlog-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auditlog -d auditlog"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  auditlog-pgdata:

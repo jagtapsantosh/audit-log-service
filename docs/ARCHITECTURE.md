@@ -2,9 +2,9 @@
 
 Tamper-evident audit log service. Records are append-only. Any change to a stored record is detectable by walking a SHA-256 hash chain.
 
-Stack: **Java 21**, **Spring Boot 3**, **PostgreSQL 16**, Flyway, JUnit 5, Testcontainers, SpringDoc OpenAPI.
+Stack: **Java 21**, **Spring Boot 3.5**, **Gradle**, **PostgreSQL 16**, Flyway, JUnit 5, Testcontainers, SpringDoc OpenAPI.
 
-Status: design complete. Implementation follows `IMPLEMENTATION_PLAN.md`.
+Status: bootstrap complete. Remaining Scenario A APIs follow `IMPLEMENTATION_PLAN.md`.
 
 ---
 

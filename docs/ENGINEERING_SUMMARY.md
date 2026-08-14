@@ -30,9 +30,10 @@ Sequence: A (MVP APIs + tamper test) → B (retention, redaction, export) → C 
 | Scenario C | [SCENARIO_C.md](SCENARIO_C.md) |
 | AI trace | [AI_USAGE_LOG.md](AI_USAGE_LOG.md) |
 | Attestation | `ATTESTATION.md` |
-| Runbook | `README.md` (after bootstrap) |
-| OpenAPI | SpringDoc `/swagger-ui.html` (after APIs) |
-| Code | `com.auditlog` — not scaffolded at the time this file was first written |
+| Runbook | `README.md` |
+| OpenAPI | SpringDoc `/swagger-ui.html` |
+| Build | `build.gradle.kts`, Gradle Wrapper |
+| Code | `com.auditlog` — Spring Boot 3.5 scaffold + Flyway V1 |
 
 ---
 
@@ -41,10 +42,11 @@ Sequence: A (MVP APIs + tamper test) → B (retention, redaction, export) → C 
 | Area | Status |
 |------|--------|
 | Design / docs | Done (2026-08-14) |
-| Scenario A code + tests | Not started |
+| Scenario A bootstrap (Gradle, Docker Compose, Flyway V1, health) | Done (2026-08-14) |
+| Scenario A APIs + tests | Not started |
 | Scenario B code + tests | Not started |
 | Scenario C code + tests | Not started |
-| README runbook | Not started |
+| README runbook | Bootstrap commands in place |
 
 ---
 

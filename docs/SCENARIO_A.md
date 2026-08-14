@@ -26,7 +26,7 @@ Dependencies run top to bottom. Do not start a task until its predecessors exist
 
 | # | Task | Intent | Constraints | Acceptance |
 |---|------|--------|-------------|------------|
-| A1 | Bootstrap | Runnable Spring Boot 3 / Java 21 app | Maven, Docker Compose Postgres 16, Flyway, actuator health | `docker compose up -d` + `./mvnw spring-boot:run`; `/actuator/health` is UP |
+| A1 | Bootstrap | Runnable Spring Boot 3 / Java 21 app | Gradle, Docker Compose Postgres 16, Flyway, actuator health | `docker compose up -d` + `./gradlew bootRun`; `/actuator/health` is UP |
 | A2 | Schema + entity | Persist events | Flyway `V1`; unique `sequence_num`; JSONB payload | Migration applies on empty DB; entity maps all V1 columns |
 | A3 | `HashChainService` | Deterministic SHA-256 | Sorted-key canonical JSON; genesis = 64 zero hex chars | Golden unit tests: known input → known hash; first record uses genesis |
 | A4 | `AuditWriteService` | Append one chain link | One transaction; advisory lock; no client `id`/`sequence`/`hash` | POST returns `id`, `sequence`, `contentHash`, `timestamp`; sequence is n+1 |

@@ -55,6 +55,16 @@ Format:
 
 ---
 
+## [2026-08-14] Task: Spring Boot Gradle bootstrap
+
+- Prompt: Generate and commit the basic Spring Boot structure from the implementation plan, using Gradle instead of Maven, and update all documents.
+- Accepted: Spring Boot 3.5.16 / Java 21 Gradle Kotlin DSL; package layout `api` / `domain` / `persistence` / `config`; Flyway V1; Docker Compose Postgres 16; actuator; SpringDoc; Testcontainers context-load test; README run commands.
+- Modified: Build tool Maven → Gradle Wrapper (`./gradlew bootRun`). Docs, `.cursorrules`, and repo layout updated to match.
+- Rejected: Spring Boot 4 from current start.spring.io (plan is Boot 3). Maven Wrapper. Implementing write/query/verify APIs in the same commit (bootstrap only).
+- Rationale: Assignment history should show scaffold before domain logic. Gradle was an explicit engineer choice over the planned Maven default.
+
+---
+
 ## Later entries
 
 Append here during bootstrap, hash-chain implementation, tests, redaction, export, and compliance work. For each: what was prompted, what was kept, what was edited, what was thrown away, and why.

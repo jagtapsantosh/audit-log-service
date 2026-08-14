@@ -2,7 +2,7 @@
 
 ## Context
 
-This is a **greenfield** project. Stack: **Java 21 + Spring Boot 3 + PostgreSQL 16**, with Maven, Flyway migrations, JUnit 5, Testcontainers, and SpringDoc OpenAPI.
+This is a **greenfield** project. Stack: **Java 21 + Spring Boot 3 + PostgreSQL 16**, with Gradle, Flyway migrations, JUnit 5, Testcontainers, and SpringDoc OpenAPI.
 
 The assignment evaluates **engineering judgment + AI-assisted execution**, not just working code. Every scenario needs: decomposition notes, tests, and documented trade-offs in the repo.
 
@@ -71,7 +71,9 @@ audit-log-service/
 │   ├── AI_USAGE_LOG.md                # prompt traceability
 │   └── ENGINEERING_SUMMARY.md         # final rationale, risks, limitations
 ├── docker-compose.yml                 # PostgreSQL for local dev
-├── pom.xml
+├── build.gradle.kts
+├── settings.gradle.kts
+├── gradlew / gradlew.bat
 └── src/
     ├── main/java/com/auditlog/
     │   ├── AuditLogApplication.java
@@ -428,6 +430,6 @@ gantt
 
 ## Live Defense Preparation
 
-- Keep Docker Compose one-command startup: `./mvnw spring-boot:run` + `docker compose up -d`
+- Keep Docker Compose one-command startup: `./gradlew bootRun` + `docker compose up -d`
 - Be ready to explain hash canonicalization, redaction scheme, and retention trade-offs
 - Expect a small live change (e.g., new filter param or event type) — keep code modular in services, not controllers
