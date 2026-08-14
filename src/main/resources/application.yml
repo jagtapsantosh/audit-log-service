@@ -41,3 +41,32 @@ springdoc:
 audit:
   retention:
     days: 365
+  security:
+    pepper: ${AUDIT_SECURITY_PEPPER:dev-only-pepper-not-for-production}
+    jwt:
+      secret: ${AUDIT_JWT_SECRET:dev-only-hmac-secret-must-be-at-least-32-bytes!}
+      ttl: 15m
+      issuer: audit-log-service
+    rate-limit:
+      token-per-minute: 10
+    api-keys:
+      - client-id: ingest-service
+        # plaintext (README only): als_ingest_dev_key_do_not_use_in_prod
+        key-hash: 21b31abc1720e3c98203c46e412b12d8e264718a1ac0c57980df1a0672b7be85
+        scopes:
+          - audit.write
+          - audit.read
+    oauth-clients:
+      - client-id: ops-admin
+        # plaintext (README only): ops-admin-secret-dev
+        secret-hash: 639233943e18007c5166afebd4eb75b46875214614b2799ef0633dc174a1bf05
+        scopes:
+          - audit.read
+          - audit.admin
+      - client-id: regulator
+        # plaintext (README only): regulator-secret-dev
+        secret-hash: 08624d1b95b24b1fd701aa9df28d739bdd6764f4518e9d2dbe0c04b95b4a188c
+        scopes:
+          - audit.read
+          - audit.compliance
+

@@ -19,6 +19,9 @@ Status: bootstrap complete. Remaining Scenario A APIs follow `IMPLEMENTATION_PLA
 | API | `AuditVerifyController` | `GET /audit/verify` — walk full chain |
 | API | `AuditExportController` | `GET /audit/export` — verifiable bundle |
 | API | `ComplianceReportController` | `GET /audit/compliance/access-report` (+ export) |
+| API | `TokenController` | Prototype only: `POST /auth/token` (client credentials JWT) |
+| Config | `ApiKeyAuthenticationFilter` | `X-API-Key` → hashed lookup → Spring authorities |
+| Config | JWT resource server | `Authorization: Bearer` validation (HMAC locally; JWKS in production) |
 | Domain | `HashChainService` | Canonical JSON, SHA-256, genesis, recompute on verify |
 | Domain | `AuditWriteService` | Sequence assignment, advisory lock, persist |
 | Domain | `AuditQueryService` | Dynamic filters + pagination |
@@ -140,10 +143,41 @@ Redaction does not change this walk: verify always uses stored original payload.
 | `GET` | `/audit/export` | Verifiable bundle |
 | `GET` | `/audit/compliance/access-report` | Access report |
 | `GET` | `/audit/compliance/access-report/export` | CSV/JSON download |
+| `POST` | `/auth/token` | Prototype JWT mint (client credentials) |
 
 No update or delete of audit event content. Query defaults: page size 50, max 200, order `sequence_num ASC`. Payload max 64KB.
 
-Errors: `{ "error", "code", "timestamp" }` via `@ControllerAdvice`.
+Errors: `{ "error", "code", "timestamp" }` via `@ControllerAdvice` (including 401/403; no key-enumeration messages).
+
+### API security (hybrid)
+
+Rejected: unauthenticated APIs; optional API key “later”; API keys on admin/compliance (a leaked ingest key must not redact, archive, or probe verify).
+
+**API keys** — service-to-service ingest and optional batch read. Header `X-API-Key`. Store SHA-256(key + pepper) in `audit.security.api-keys` (config). Each key: `clientId` + scopes.
+
+**JWT** — ops and compliance. Header `Authorization: Bearer`. Prototype `POST /auth/token` issues ~15 min HMAC JWTs. Production: corporate IdP + JWKS; drop the local token endpoint.
+
+| Scope | Meaning |
+|-------|---------|
+| `audit.write` | Append |
+| `audit.read` | Query, export, verify |
+| `audit.admin` | Redact, archive (implies read) |
+| `audit.compliance` | Compliance APIs |
+
+| Path | API key | JWT | Scope |
+|------|---------|-----|-------|
+| `POST /audit/events` | yes (primary) | yes | `audit.write` |
+| `GET /audit/events` | yes | yes | `audit.read` |
+| `GET /audit/export` | yes | yes | `audit.read` |
+| `GET /audit/verify` | no | yes | `audit.read` |
+| `POST /audit/events/{id}/redact` | no | yes | `audit.admin` |
+| `POST /audit/admin/archive` | no | yes | `audit.admin` |
+| `GET /audit/compliance/*` | no | yes | `audit.compliance` |
+| `POST /auth/token` | — | — | Public, rate-limited |
+| `/actuator/health` | — | — | Public |
+| OpenAPI | — | — | Local only; deny in `prod` |
+
+TLS at the reverse proxy in production. Rate limit per IP on `/auth/token` (~10/min). Never log `Authorization` or `X-API-Key`. Filters and `POST /auth/token` are implemented.
 
 ---
 
@@ -151,6 +185,6 @@ Errors: `{ "error", "code", "timestamp" }` via `@ControllerAdvice`.
 
 - Validation: `@NotBlank` on required write fields; required `occurredAt`; payload size cap; reject `occurredAt` more than 5 minutes after `recordedAt`.
 - SQL: JPA parameterized queries only.
-- Auth: optional API key on admin/redact in a later pass; rate limiting is a production follow-up.
-- Logs: append, verify result, archive count.
+- Auth: hybrid API key + JWT (see [API security](#api-security-hybrid)); implemented. Filters and `POST /auth/token` are live.
+- Logs: append, verify result, archive count; never log credentials.
 - Metrics: `audit.events.written`, `audit.verify.duration`, `audit.chain.intact`.

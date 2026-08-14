@@ -152,6 +152,7 @@ Use a **pessimistic lock** (`SELECT ... FOR UPDATE` on a chain-head row or advis
 | `POST` | `/audit/events` | Append event; returns `id`, `sequence`, `contentHash`, `occurredAt`, `recordedAt` |
 | `GET` | `/audit/events` | Filter + paginate |
 | `GET` | `/audit/verify` | Walk chain; report integrity |
+| `POST` | `/auth/token` | Prototype only: OAuth 2.0 client-credentials JWT |
 
 **Write request body:**
 
@@ -196,7 +197,8 @@ Violation types: `CONTENT_HASH_MISMATCH`, `PREVIOUS_HASH_BREAK`, `SEQUENCE_GAP`.
 4. **`AuditQueryService`** — dynamic JPA Specification / native query for filters
 5. **`AuditVerifyService`** — full-chain walk with detailed first-violation reporting
 6. **Controllers + validation** — `@Valid` DTOs, `@ControllerAdvice` error handling
-7. **OpenAPI** — SpringDoc at `/swagger-ui.html`
+7. **OpenAPI** — SpringDoc at `/swagger-ui.html` (bearer + apiKey schemes)
+8. **Security** — Spring Security hybrid: API keys + JWT resource server (implement with APIs, not as a separate freeze)
 
 ### A4. Tests (Scenario A validation script)
 
@@ -316,9 +318,9 @@ Provide a standalone **`ExportVerifier`** utility (Java class + documented algor
 | Which resources are "client account data"? | `resourceType = CLIENT_ACCOUNT` |
 | Report format for regulators? | JSON + CSV download |
 | Real-time vs point-in-time? | Point-in-time snapshot with `reportGeneratedAt` + chain head hash |
-| Authentication / RBAC for regulators? | Scoped out; note as production gap |
+| Authentication / RBAC for regulators? | JWT with `audit.compliance` in this prototype; corporate SSO/IdP is production |
 
-**Scoped out (with rationale):** SSO integration, scheduled regulatory filing, PDF formatting, multi-tenant isolation — document as production next steps.
+**Scoped out (with rationale):** Corporate SSO / JWKS IdP, scheduled regulatory filing, PDF formatting, multi-tenant isolation — document as production next steps. Prototype mints local JWTs via `POST /auth/token`.
 
 ### C2. Implementation
 
@@ -340,17 +342,45 @@ Provide a standalone **`ExportVerifier`** utility (Java class + documented algor
 
 ## Cross-Cutting Concerns
 
-### Security (production readiness signals)
+### Security (hybrid API keys + JWT)
 
-- Input validation on all DTOs (`@NotBlank`, payload size limit e.g. 64KB)
-- No update/delete endpoints for audit records
-- SQL injection prevented via JPA parameterized queries
-- Optional: Spring Security with API key for admin endpoints (archive, redact) — document as minimal auth layer
-- Rate limiting noted as production follow-up
+The assignment does not specify auth. This layer is **who may call which endpoint**. Scenario C still scopes out corporate SSO; callers in the prototype use API keys or locally minted JWTs. Production sits behind TLS and an enterprise IdP.
+
+**Threats:** anonymous write/query of the chain; an ingest client redacting or archiving; secrets in logs/OpenAPI; brute force on the token endpoint. Auth does not replace dual-clock evidence (`recordedAt`).
+
+**API keys** (machine ingest): header `X-API-Key`. Secrets stored hashed (SHA-256 of key + pepper). Prototype keys in `audit.security.api-keys` (config, not a table). Each key has `clientId` + scopes.
+
+**JWT** (ops / compliance): header `Authorization: Bearer`. Prototype: `POST /auth/token` (OAuth 2.0 client credentials: `client_id` + `client_secret`) issues an HMAC-signed JWT (~15 min). Production: corporate IdP + JWKS; no local token endpoint.
+
+Spring Security maps both to the same authorities.
+
+| Scope | Meaning |
+|-------|---------|
+| `audit.write` | Append events |
+| `audit.read` | Query, export, verify |
+| `audit.admin` | Redact, retention sweep (implies read) |
+| `audit.compliance` | Compliance report/export |
+
+| Path | API key | JWT | Required scope |
+|------|---------|-----|----------------|
+| `POST /audit/events` | yes (primary) | yes | `audit.write` |
+| `GET /audit/events` | yes | yes | `audit.read` |
+| `GET /audit/export` | yes | yes | `audit.read` |
+| `GET /audit/verify` | no | yes | `audit.read` |
+| `POST /audit/events/{id}/redact` | no | yes | `audit.admin` |
+| `POST /audit/admin/archive` | no | yes | `audit.admin` |
+| `GET /audit/compliance/*` | no | yes | `audit.compliance` |
+| `POST /auth/token` | n/a | n/a | Public, strict rate limit |
+| `/actuator/health` | n/a | n/a | Public |
+| `/swagger-ui.html`, `/v3/api-docs` | n/a | n/a | Open in local; deny in `prod` |
+
+Verify, admin, and compliance are JWT-only so a leaked ingest key cannot archive, redact, or probe integrity.
+
+Also: TLS in production (reverse proxy; local HTTP OK). Rate limit per API-key `clientId` / JWT `sub`; token endpoint tighter (e.g. 10/min). Never log `Authorization` or `X-API-Key`. Security headers (`nosniff`, deny framing). Input validation, 64KB payload, parameterized SQL, no update/delete APIs. 401/403 use the standard error envelope; no key-enumeration messages.
 
 ### Error Handling
 
-Standard error envelope: `{ "error": "...", "code": "...", "timestamp": "..." }` via `@ControllerAdvice`.
+Standard error envelope: `{ "error": "...", "code": "...", "timestamp": "..." }` via `@ControllerAdvice`. Same shape for 401/403; do not reveal whether a key or client id exists.
 
 ### Observability
 

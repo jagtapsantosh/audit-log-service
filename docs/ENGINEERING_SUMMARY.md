@@ -12,6 +12,7 @@ Why this shape:
 
 - **One global chain** — verify and export stay linear; the assignment’s validation script is “walk the chain.”
 - **Dual clocks** — client `occurredAt` (event time) plus server `recordedAt` (ingest time), both hashed. The PDF allows either; both is the production-grade audit pattern. Query/compliance use `occurredAt`; retention uses `recordedAt`.
+- **Hybrid API security** — hashed API keys for ingest; JWT for verify/admin/compliance. Least-privilege scopes. Local `POST /auth/token` stands in for a corporate IdP.
 - **Soft archive + redaction overlay** — the two Scenario B constraints (don’t false-break verify; don’t destroy original hashes) both forbid mutating hashed bytes.
 - **Clarify C before coding** — the product sentence is not an API. [SCENARIO_C.md](SCENARIO_C.md) is the contract.
 
@@ -41,12 +42,13 @@ Sequence: A (MVP APIs + tamper test) → B (retention, redaction, export) → C 
 
 | Area | Status |
 |------|--------|
-| Design / docs | Done (2026-08-14) |
+| Design / docs | Done (2026-08-14); dual clocks + hybrid auth frozen |
 | Scenario A bootstrap (Gradle, Docker Compose, Flyway V1, health) | Done (2026-08-14) |
+| Hybrid API security (API keys + JWT token mint) | Done (2026-08-14) |
 | Scenario A APIs + tests | Not started |
 | Scenario B code + tests | Not started |
 | Scenario C code + tests | Not started |
-| README runbook | Bootstrap commands in place |
+| README runbook | Bootstrap + evaluator auth curls |
 
 ---
 
@@ -61,6 +63,7 @@ Sequence: A (MVP APIs + tamper test) → B (retention, redaction, export) → C 
 | Scenario C expands into identity/PDF/filings | Written scope boundary | API matches [SCENARIO_C.md](SCENARIO_C.md) only |
 | Canonical form omits a hashed field | Freeze field list in ARCHITECTURE.md | Code review + hash unit tests |
 | Caller backdates `occurredAt` at write | Hashed `recordedAt` is ingest evidence; retention uses `recordedAt` | Dual-clock docs + retention tests |
+| Leaked ingest API key | JWT-only for verify, redact, archive, compliance | Auth matrix tests (API key → 403 on admin) |
 
 Validation gate for A (assignment script): write → query → verify intact → SQL update one payload → verify names that sequence and `CONTENT_HASH_MISMATCH`.
 
@@ -73,7 +76,7 @@ Validation gate for A (assignment script): write → query → verify intact →
 - Payload is JSON objects with dotted paths for redaction; arrays out of scope for v1.
 - Dual clocks: `occurredAt` is client-claimed event time (may be backdated at write); `recordedAt` is server ingest time. Query `from`/`to` and compliance reports use `occurredAt`; retention uses `recordedAt`.
 - “Client account access” = `CLIENT_ACCOUNT` + four event types listed in Scenario C.
-- No production IAM in the timebox; admin/redact may later use a static API key.
+- Prototype auth is hybrid API keys + locally minted JWTs. Production uses TLS termination and a corporate IdP (JWKS); no local token endpoint.
 
 ---
 
@@ -83,6 +86,6 @@ Validation gate for A (assignment script): write → query → verify intact →
 - Soft archive never reclaims disk.
 - Export recipients cannot recompute per-record `contentHash` when the bundle payload is redacted; they can check `bundleHash` and, if they have service access, `/audit/verify`.
 - Compliance report is a live query with a pinned head hash, not a signed, stored filing.
-- No rate limiting, no SSO, no multi-tenant isolation, no PDF.
+- Prototype JWT mint is not corporate SSO. No multi-tenant isolation, no PDF.
 
-These are deliberate timebox cuts, not accidental omissions. Production follow-ups: column encryption or field-level crypto, partition/tier old rows, signed reports, regulator RBAC.
+These are deliberate timebox cuts, not accidental omissions. Production follow-ups: column encryption or field-level crypto, partition/tier old rows, signed reports, JWKS/IdP, mTLS.

@@ -14,6 +14,8 @@ Records older than a configurable window must be archivable / soft-deletable. `G
 
 Config: `audit.retention.days` (default **365**). A scheduled job (and `POST /audit/admin/archive`) sets `status = 'ARCHIVED'` and `archived_at` where **`recorded_at`** is older than the window. Ingest time is used so a backdated `occurredAt` cannot keep a row hot. Rows are **never deleted**.
 
+**Auth for `POST /audit/admin/archive`:** JWT with `audit.admin` only (no API key).
+
 - Default `GET /audit/events` excludes `ARCHIVED` unless `includeArchived=true`.
 - Verify walks **all** rows (`ACTIVE` + `ARCHIVED`) by `sequence_num`. Archived links stay in the chain.
 
@@ -57,6 +59,8 @@ audit_redactions (
 { "fieldPaths": ["accountNumber"], "reason": "GDPR", "redactedBy": "admin-1" }
 ```
 
+**Auth:** JWT with `audit.admin` only (no API key). `redactedBy` should match the JWT `sub` (or be derived from it) so callers cannot spoof the operator id.
+
 - Query/export replace values at `fieldPath` with `"[REDACTED]"` and list `redactedFields`.
 - Verify uses stored original payload → chain still intact.
 - `has_redactions` on the record is a cache flag.
@@ -83,6 +87,8 @@ audit_redactions (
 ## B3. Bulk export
 
 `GET /audit/export?actorId=` **or** `?resourceId=` (optional `resourceType`). Require one of actor/resource. Apply redaction view. Download JSON.
+
+**Auth:** API key or JWT with `audit.read`.
 
 ```json
 {
@@ -125,9 +131,9 @@ If a record has no redactions, the recipient **can** recompute `contentHash` fro
 | # | Task | Depends on | Acceptance |
 |---|------|------------|------------|
 | B1 | V2 migration: status, archived_at, has_redactions, `audit_redactions` | A schema | Flyway up on existing A DB |
-| B2 | `RetentionService` + admin/cron | B1 | Records past window become ARCHIVED; verify still intact |
+| B2 | `RetentionService` + admin/cron | B1 | Records past window become ARCHIVED; verify still intact; archive endpoint JWT `audit.admin` only |
 | B3 | Query `includeArchived` | B2 | Default hides archived |
-| B4 | `RedactionService` + POST redact | B1 | Query shows `[REDACTED]`; verify intact; SQL tamper still detected |
+| B4 | `RedactionService` + POST redact | B1 | Query shows `[REDACTED]`; verify intact; SQL tamper still detected; redact is JWT `audit.admin` |
 | B5 | Export + `ExportVerifier` | B4 | Bundle downloads; `bundleHash` matches; metadata includes `redactedFields` |
 
 ---
@@ -135,6 +141,7 @@ If a record has no redactions, the recipient **can** recompute `contentHash` fro
 ## Validation
 
 - Archive sweep; verify `intact: true` with mixed ACTIVE/ARCHIVED.
+- API key on redact or archive → 403.
 - Redact `accountNumber`; GET event shows `[REDACTED]`; verify intact.
 - SQL `UPDATE` of original payload still yields `CONTENT_HASH_MISMATCH`.
 - Export for an actor; `ExportVerifier` accepts; after editing the file, `bundleHash` fails.

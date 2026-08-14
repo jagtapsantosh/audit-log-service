@@ -16,7 +16,7 @@ Intentionally under-specified. This file is the clarification **before** code. I
 |---|-----------|----------------------|-----------------|
 | 1 | What is “access”? | Login? View? Update? Export? Permission change? | Closed set: `ACCOUNT_VIEWED`, `ACCOUNT_UPDATED`, `STATEMENT_DOWNLOADED`, `PERMISSION_GRANTED` |
 | 2 | What is “client account data”? | Any resource? Only accounts? PII fields? | `resourceType = CLIENT_ACCOUNT` |
-| 3 | Who is the regulator user? | SSO? Separate IdP? Break-glass? | No regulator identity in this prototype (production gap) |
+| 3 | Who is the regulator user? | SSO? Separate IdP? Break-glass? | JWT with `audit.compliance` minted locally; corporate SSO is production |
 | 4 | Report shape | PDF filing? CSV? Portal UI? | JSON API + CSV/JSON file download |
 | 5 | Freshness | Live query vs snapshot for an exam date | Point-in-time snapshot: `generatedAt` + `chainHeadHash` |
 | 6 | Completeness vs redaction | Must regulators see account numbers? | Same redaction overlay as B; metadata lists redacted fields |
@@ -41,6 +41,8 @@ This is the only C requirement the code is accountable to.
 | `GET` | `/audit/compliance/access-report/export` | Same filter; `format=csv` or `json` (default json) |
 
 Query params: `resourceId`, `actorId`, `from`, `to`, `page`, `size`. `from`/`to` are inclusive on **`occurredAt`**. Always constrained to `CLIENT_ACCOUNT` + the access event-type set (not caller-overridable). Include archived rows.
+
+**Auth:** JWT with `audit.compliance` only. API keys are rejected (403). Corporate SSO/IdP is out of scope; the prototype mints JWTs via `POST /auth/token`.
 
 Response:
 
@@ -78,7 +80,8 @@ Events in the report are redaction-aware (Scenario B view). `reportId` is a UUID
 
 | In this prototype | Out (production next steps) | Why out |
 |-------------------|-----------------------------|---------|
-| Read-only report + CSV/JSON export | Regulator SSO / RBAC | Identity provider not in assignment; would fake security |
+| Read-only report + CSV/JSON export | Corporate SSO / JWKS IdP | Identity provider not in assignment; local JWT mint is the honest subset |
+| JWT `audit.compliance` on compliance APIs | Interactive regulator portal / SAML | Would fake an IdP |
 | Fixed access event-type enum | Configurable product catalog of “access” | Needs a real product owner; enum is an explicit assumption |
 | `chainHeadHash` snapshot | Cryptographic signed report file (JWS) | Timebox; head hash is enough to cross-check |
 | Redaction-aware rows | Unredacted “exam mode” | Privacy vs exam completeness needs legal input |
@@ -96,9 +99,9 @@ Partial implementation is acceptable only if this file still matches the running
 |---|------|------------|
 | C1 | Freeze this clarification (this file) before coding | Reviewers can diff API vs this statement |
 | C2 | `ComplianceReportService` filter + summary + head hash | Non-access and non-`CLIENT_ACCOUNT` events excluded |
-| C3 | JSON report endpoint | `reportId`, `generatedAt`, `chainHeadHash` always present |
+| C3 | JSON report endpoint | `reportId`, `generatedAt`, `chainHeadHash` always present; 401/403 without `audit.compliance` JWT |
 | C4 | CSV/JSON export | Same filter; CSV columns documented in OpenAPI |
-| C5 | Tests | Seed mix of access and non-access; assert counts; assert head hash equals max sequence hash |
+| C5 | Tests | Seed mix of access and non-access; assert counts; assert head hash equals max sequence hash; API key cannot call compliance |
 
 ---
 

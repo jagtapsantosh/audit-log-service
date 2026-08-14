@@ -32,7 +32,8 @@ Dependencies run top to bottom. Do not start a task until its predecessors exist
 | A4 | `AuditWriteService` | Append one chain link | One transaction; advisory lock; no client `id`/`sequence`/`hash`/`recordedAt` | POST returns `id`, `sequence`, `contentHash`, `occurredAt`, `recordedAt`; sequence is n+1 |
 | A5 | `AuditQueryService` | Filter + page | All filters optional and combinable; max page size 200 | Integration tests for each param alone and together; stable `sequence_num` order |
 | A6 | `AuditVerifyService` | Detect tamper | Walk **all** rows by sequence; stop at first violation | Intact after honest writes; SQL payload edit → `CONTENT_HASH_MISMATCH` at that sequence |
-| A7 | Controllers + errors | HTTP contract | `@Valid` DTOs; no update/delete mappings | OpenAPI at `/swagger-ui.html`; error envelope `{error, code, timestamp}` |
+| A7 | Controllers + errors | HTTP contract | `@Valid` DTOs; no update/delete mappings | OpenAPI at `/swagger-ui.html` with bearer + apiKey schemes; error envelope `{error, code, timestamp}` |
+| A8 | Hybrid auth | Who may call write/query/verify | API key and/or JWT; verify is JWT-only | 401 without credentials; 403 if scope missing; OpenAPI documents both schemes |
 
 ---
 
@@ -53,6 +54,8 @@ Dependencies run top to bottom. Do not start a task until its predecessors exist
 
 Rejected if required strings are blank, `occurredAt` is missing, payload exceeds 64KB, or `occurredAt` is more than 5 minutes after server `recordedAt`. Arbitrarily old `occurredAt` is allowed. Response includes `occurredAt`, `recordedAt`, and hashes. Implementation: lock → load head → `sequence = head+1`, `previousHash = head.contentHash or GENESIS`, `recordedAt = Instant.now()` → hash → insert.
 
+**Auth:** `X-API-Key` (primary, scope `audit.write`) or `Authorization: Bearer` with `audit.write`. Missing/invalid credentials → 401.
+
 ---
 
 ## Query contract
@@ -60,6 +63,8 @@ Rejected if required strings are blank, `occurredAt` is missing, payload exceeds
 `GET /audit/events`
 
 Query params: `actorId`, `resourceType`, `resourceId`, `eventType`, `from`, `to`, optional `recordedFrom`/`recordedTo`, `page`, `size`. `from`/`to` are inclusive on **`occurredAt`**. `recordedFrom`/`recordedTo` are inclusive on **`recordedAt`**. Default size 50.
+
+**Auth:** API key or JWT with `audit.read`. 401 without credentials.
 
 ---
 
@@ -83,6 +88,8 @@ Query params: `actorId`, `resourceType`, `resourceId`, `eventType`, `from`, `to`
 
 `firstViolation` is omitted when `intact` is true. Types: `CONTENT_HASH_MISMATCH`, `PREVIOUS_HASH_BREAK`, `SEQUENCE_GAP`.
 
+**Auth:** JWT with `audit.read` only (no API key). A leaked ingest key must not probe chain integrity.
+
 ---
 
 ## Validation
@@ -96,6 +103,9 @@ Query params: `actorId`, `resourceType`, `resourceId`, `eventType`, `from`, `to`
 | Each filter alone and combined | Integration | Query spec |
 | Page through results | Integration | Order by `sequence_num` |
 | `UPDATE` payload in DB; verify reports break at that sequence | Integration | Tamper evidence |
+| No credentials on write/query/verify | Integration | 401 |
+| API key on verify | Integration | 403 |
+| JWT without `audit.write` on POST | Integration | 403 |
 
 **Manual flow** (also in README after bootstrap):
 
@@ -109,4 +119,4 @@ Query params: `actorId`, `resourceType`, `resourceId`, `eventType`, `from`, `to`
 
 ## Out of scope for A
 
-Retention, redaction, export, compliance reports (B and C). Auth beyond input validation. Physical row delete.
+Retention, redaction, export, compliance reports (B and C). Corporate IdP/JWKS (local `POST /auth/token` only). Physical row delete.

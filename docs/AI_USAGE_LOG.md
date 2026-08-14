@@ -75,6 +75,26 @@ Format:
 
 ---
 
+## [2026-08-14] Task: Hybrid API security
+
+- Prompt: Production-grade API security was missing from the plan. Brainstorm and freeze an industry-standard mechanism. Engineer chose hybrid: JWT for interactive/compliance, API keys for service-to-service ingest.
+- Accepted: Hashed `X-API-Key` (config, peppered SHA-256) for write/query/export; JWT Bearer for verify/admin/compliance; scopes `audit.write|read|admin|compliance`; prototype `POST /auth/token` (client credentials, ~15 min HMAC JWT); production IdP/JWKS/TLS. Rate limits, no credential logging, 401/403 envelope.
+- Modified: Replaced “optional API key later” and “SSO fully scoped out.” Compliance now requires JWT `audit.compliance`; SSO remains a production IdP, not a fake portal.
+- Rejected: Unauthenticated APIs. API keys on redact/archive/verify/compliance (privilege escalation if an ingest key leaks). Implementing Spring Security in this freeze (contract only, same as dual clocks).
+- Rationale: Assignment does not specify auth; a production-grade audit API still needs least privilege. Hybrid matches how ingest services vs operators actually call the system.
+
+---
+
+## [2026-08-14] Task: Implement hybrid API security
+
+- Prompt: Add evaluator credentials to README and code the security changes.
+- Accepted: Spring Security resource server (HS256 JWT); hashed `X-API-Key` filter; `POST /auth/token` (JSON + form); JWT-only managers for verify/admin/compliance; 401/403 JSON envelope; token rate limit; sample keys in README; OpenAPI apiKey + bearer schemes; `prod` profile disables Swagger.
+- Modified: Write/query/verify still return 404 after successful auth until Scenario A controllers exist — README documents that so evaluators can still prove 401/403/404.
+- Rejected: Real corporate IdP/JWKS. Logging credentials. API keys on verify/admin/compliance.
+- Rationale: Evaluator must run both mechanisms on a laptop with only Docker + JDK.
+
+---
+
 ## Later entries
 
 Append here during bootstrap, hash-chain implementation, tests, redaction, export, and compliance work. For each: what was prompted, what was kept, what was edited, what was thrown away, and why.
