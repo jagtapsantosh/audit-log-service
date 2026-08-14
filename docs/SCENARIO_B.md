@@ -12,7 +12,7 @@ Records older than a configurable window must be archivable / soft-deletable. `G
 
 ### Design: soft archive
 
-Config: `audit.retention.days` (default **365**). A scheduled job (and `POST /audit/admin/archive`) sets `status = 'ARCHIVED'` and `archived_at` where `timestamp` is older than the window. Rows are **never deleted**.
+Config: `audit.retention.days` (default **365**). A scheduled job (and `POST /audit/admin/archive`) sets `status = 'ARCHIVED'` and `archived_at` where **`recorded_at`** is older than the window. Ingest time is used so a backdated `occurredAt` cannot keep a row hot. Rows are **never deleted**.
 
 - Default `GET /audit/events` excludes `ARCHIVED` unless `includeArchived=true`.
 - Verify walks **all** rows (`ACTIVE` + `ARCHIVED`) by `sequence_num`. Archived links stay in the chain.
@@ -97,7 +97,8 @@ audit_redactions (
       "actorId": "user-123",
       "resourceType": "SESSION",
       "resourceId": "sess-abc",
-      "timestamp": "2026-08-14T11:37:00Z",
+      "occurredAt": "2026-08-14T11:30:00Z",
+      "recordedAt": "2026-08-14T11:37:00Z",
       "contentHash": "...",
       "previousHash": "...",
       "payload": { "accountNumber": "[REDACTED]" },

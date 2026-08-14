@@ -21,7 +21,7 @@ Format:
 - Accepted: Layered API / domain / persistence design; global SHA-256 chain; server-assigned timestamps; Flyway V1/V2; Testcontainers; deliverable file list matching §7 of the assignment.
 - Modified: Tightened hash canonicalization (sorted keys, UTF-8, no whitespace) and concurrent-write locking after reviewing race conditions on `previousHash`.
 - Rejected: Python/FastAPI and Node stacks (engineer chose Java). Per-resource sub-chains (verify/export harder). SHA-512 (no benefit for this threat model). Hard-delete retention (false verify breaks).
-- Rationale: Assignment scores engineering judgment and AI process, not only code. Plan had to freeze trade-offs before implementation.
+- Rationale: Assignment scores engineering judgment and AI process, not only code. Plan had to freeze trade-offs before implementation. Server-only timestamps were the initial pick; later reversed to dual clocks (see 2026-08-14 dual-clock entry).
 
 ---
 
@@ -62,6 +62,16 @@ Format:
 - Modified: Build tool Maven → Gradle Wrapper (`./gradlew bootRun`). Docs, `.cursorrules`, and repo layout updated to match.
 - Rejected: Spring Boot 4 from current start.spring.io (plan is Boot 3). Maven Wrapper. Implementing write/query/verify APIs in the same commit (bootstrap only).
 - Rationale: Assignment history should show scaffold before domain logic. Gradle was an explicit engineer choice over the planned Maven default.
+
+---
+
+## [2026-08-14] Task: Dual-clock timestamps
+
+- Prompt: Keep the dual timestamps for the actual event and audit service log time tracking. Engineer chose dual clocks.
+- Accepted: `occurredAt` (client, required) + `recordedAt` (server `Instant` at persist), both in the hash. Query/compliance `from`/`to` on `occurredAt`; optional `recordedFrom`/`recordedTo`; retention on `recordedAt`. Reject `occurredAt` more than 5 minutes after `recordedAt`. V1 revised in place (`occurred_at`/`recorded_at`; dropped `timestamp` and unhashed `created_at`).
+- Modified: Reversed the earlier server-only timestamp decision. Hash canonical field list now includes both clocks.
+- Rejected: Caller-only time (no ingest evidence). Server-only time (loses delayed/offline event time). Keeping a third `created_at` column (redundant with `recordedAt`). Changing database away from PostgreSQL.
+- Rationale: Dual clocks are the production audit pattern: event time for regulators, ingest time for tamper/ops/retention. Postgres remains an engineering fit (`JSONB`, advisory lock, Testcontainers), not a spec mandate.
 
 ---
 

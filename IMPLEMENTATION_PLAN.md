@@ -93,7 +93,7 @@ audit-log-service/
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Timestamp | **Server-assigned** (`Instant` at persist time) | Prevents backdating/tampering via caller; document in API spec |
+| Clocks | **Dual:** client `occurredAt` + server `recordedAt` (both hashed) | PDF allows either; both preserve event time and ingest time. Query `from`/`to` on `occurredAt`; retention on `recordedAt` |
 | Hash algorithm | **SHA-256** over canonical JSON | Industry standard, built into Java `MessageDigest` |
 | Chain scope | **Global sequential chain** (single monotonic `sequence` per record) | Simplest tamper detection; every record links to predecessor |
 | Genesis value | Constant `000...000` (64 hex zeros) | Explicit, verifiable first-link |
@@ -107,8 +107,8 @@ For record at sequence `n`:
 
 ```
 contentHash = SHA-256(canonical({
-  sequence, eventType, actorId, resourceType, resourceId,
-  payload, timestamp, previousHash
+  actorId, eventType, occurredAt, payload, previousHash,
+  recordedAt, resourceId, resourceType, sequence
 }))
 previousHash = contentHash of record (n-1), or GENESIS for n=1
 ```
@@ -130,16 +130,17 @@ CREATE TABLE audit_records (
   resource_type VARCHAR(100) NOT NULL,
   resource_id   VARCHAR(255) NOT NULL,
   payload       JSONB NOT NULL DEFAULT '{}',
-  timestamp     TIMESTAMPTZ NOT NULL,
+  occurred_at   TIMESTAMPTZ NOT NULL,             -- client: when the event occurred
+  recorded_at   TIMESTAMPTZ NOT NULL,             -- server: when this service accepted it
   content_hash  CHAR(64) NOT NULL,
-  previous_hash CHAR(64) NOT NULL,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  previous_hash CHAR(64) NOT NULL
 );
 
 CREATE INDEX idx_audit_actor ON audit_records(actor_id);
 CREATE INDEX idx_audit_resource ON audit_records(resource_type, resource_id);
 CREATE INDEX idx_audit_event_type ON audit_records(event_type);
-CREATE INDEX idx_audit_timestamp ON audit_records(timestamp);
+CREATE INDEX idx_audit_occurred_at ON audit_records(occurred_at);
+CREATE INDEX idx_audit_recorded_at ON audit_records(recorded_at);
 ```
 
 Use a **pessimistic lock** (`SELECT ... FOR UPDATE` on a chain-head row or advisory lock) when appending to prevent concurrent write race conditions on `previousHash`.
@@ -148,7 +149,7 @@ Use a **pessimistic lock** (`SELECT ... FOR UPDATE` on a chain-head row or advis
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/audit/events` | Append event; returns `id`, `sequence`, `contentHash`, `timestamp` |
+| `POST` | `/audit/events` | Append event; returns `id`, `sequence`, `contentHash`, `occurredAt`, `recordedAt` |
 | `GET` | `/audit/events` | Filter + paginate |
 | `GET` | `/audit/verify` | Walk chain; report integrity |
 
@@ -160,11 +161,14 @@ Use a **pessimistic lock** (`SELECT ... FOR UPDATE` on a chain-head row or advis
   "actorId": "user-123",
   "resourceType": "SESSION",
   "resourceId": "sess-abc",
+  "occurredAt": "2026-08-14T11:30:00Z",
   "payload": { "ip": "10.0.0.1" }
 }
 ```
 
-**Query params:** `actorId`, `resourceType`, `resourceId`, `eventType`, `from`, `to`, `page`, `size` (Spring Data `Pageable`, default size 50, max 200).
+`occurredAt` is required. Server sets `recordedAt` at persist. Reject if `occurredAt` is more than 5 minutes after `recordedAt`. Arbitrarily old `occurredAt` is allowed (async/offline).
+
+**Query params:** `actorId`, `resourceType`, `resourceId`, `eventType`, `from`, `to` (inclusive on **`occurredAt`**), optional `recordedFrom`/`recordedTo` (inclusive on **`recordedAt`**), `page`, `size` (Spring Data `Pageable`, default size 50, max 200).
 
 **Verify response:**
 
@@ -219,7 +223,7 @@ Violation types: `CONTENT_HASH_MISMATCH`, `PREVIOUS_HASH_BREAK`, `SEQUENCE_GAP`.
 
 ### B1. Retention Policy
 
-**Design:** Soft archive — records are **never physically removed** from the chain. After configurable retention window (`audit.retention.days`, default 365), a scheduled job marks records as `ARCHIVED`.
+**Design:** Soft archive — records are **never physically removed** from the chain. After configurable retention window (`audit.retention.days`, default 365), a scheduled job marks records as `ARCHIVED` where **`recorded_at`** is older than the window (ingest time, so a backdated `occurredAt` cannot keep a row hot).
 
 **Schema extension** (`V2__retention_and_redaction.sql`):
 
@@ -278,6 +282,8 @@ audit_redactions (
     {
       "sequence": 1,
       "eventType": "...",
+      "occurredAt": "...",
+      "recordedAt": "...",
       "contentHash": "...",
       "previousHash": "...",
       "payload": { },
@@ -300,7 +306,7 @@ Provide a standalone **`ExportVerifier`** utility (Java class + documented algor
 
 **Clarified requirement statement:**
 
-> Provide a read-only compliance report and export that lists all audit events where `resourceType = CLIENT_ACCOUNT` and `eventType` indicates data access (e.g., `ACCOUNT_VIEWED`, `ACCOUNT_UPDATED`, `PERMISSION_GRANTED`), filterable by account (`resourceId`), actor, and time range, with immutable evidence that the report data matches the tamper-evident audit chain at report generation time.
+> Provide a read-only compliance report and export that lists all audit events where `resourceType = CLIENT_ACCOUNT` and `eventType` indicates data access (e.g., `ACCOUNT_VIEWED`, `ACCOUNT_UPDATED`, `PERMISSION_GRANTED`), filterable by account (`resourceId`), actor, and time range on **`occurredAt`**, with immutable evidence that the report data matches the tamper-evident audit chain at report generation time.
 
 **Ambiguities identified:**
 

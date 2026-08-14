@@ -48,12 +48,12 @@ Package root: `com.auditlog` (`api`, `domain`, `persistence`, `config`).
 | `resource_type` | `VARCHAR(100) NOT NULL` | e.g. `SESSION`, `CLIENT_ACCOUNT` |
 | `resource_id` | `VARCHAR(255) NOT NULL` | Specific resource |
 | `payload` | `JSONB NOT NULL DEFAULT '{}'` | Event detail; original values always stored |
-| `timestamp` | `TIMESTAMPTZ NOT NULL` | **Server-assigned** at persist |
+| `occurred_at` | `TIMESTAMPTZ NOT NULL` | Client: when the business event happened (hashed) |
+| `recorded_at` | `TIMESTAMPTZ NOT NULL` | Server: when this service accepted the row (hashed) |
 | `content_hash` | `CHAR(64) NOT NULL` | SHA-256 hex of canonical content |
 | `previous_hash` | `CHAR(64) NOT NULL` | Predecessor `content_hash`, or genesis |
-| `created_at` | `TIMESTAMPTZ NOT NULL DEFAULT now()` | Insert time (not hashed) |
 
-Indexes: `actor_id`; `(resource_type, resource_id)`; `event_type`; `timestamp`.
+Indexes: `actor_id`; `(resource_type, resource_id)`; `event_type`; `occurred_at`; `recorded_at`.
 
 ### Scenario B extensions (`V2__retention_and_redaction.sql`)
 
@@ -69,14 +69,26 @@ Indexes: `actor_id`; `(resource_type, resource_id)`; `event_type`; `timestamp`.
 
 | Decision | Choice | Why |
 |----------|--------|-----|
-| Timestamp | Server `Instant` at persist | Caller cannot backdate |
+| Clocks | Dual: client `occurredAt` + server `recordedAt`, both hashed | PDF allows either; both preserve event time and ingest time |
 | Algorithm | SHA-256 via `MessageDigest` | Standard, no extra crypto deps |
 | Chain scope | One global sequence | Simplest verify/export; every record links to the previous |
 | Genesis | 64 hex zeros | Explicit first-link; no special-case hash |
 | Canonical form | Sorted keys, UTF-8, no whitespace | Same bytes on write and verify |
 | Append-only | No update/delete APIs or repo methods | Tamper only via direct SQL (the assigned test) |
 
-Rejected: per-resource sub-chains (harder verify/export); SHA-512 (no extra security needed here); caller-supplied timestamp (backdating).
+Rejected: per-resource sub-chains (harder verify/export); SHA-512 (no extra security needed here); **caller-only** timestamp (no ingest evidence); **server-only** timestamp (loses delayed/offline event time); a third unhashed `created_at` (redundant with `recordedAt`).
+
+**Which clock for what**
+
+| Use | Clock |
+|-----|--------|
+| Write body | Client sends `occurredAt` (required). Server sets `recordedAt` |
+| Validation | Reject if `occurredAt` > `recordedAt` + 5 minutes; old `occurredAt` allowed |
+| `GET /audit/events` `from`/`to` | `occurredAt` |
+| Optional `recordedFrom`/`recordedTo` | `recordedAt` |
+| Retention/archive | `recordedAt` (backdated `occurredAt` cannot stay hot) |
+| Compliance report `from`/`to` | `occurredAt` |
+| Error envelope `timestamp` | When the error was produced (not an audit clock) |
 
 ### Canonical object
 
@@ -86,16 +98,17 @@ Hash input is JSON with **lexicographically sorted keys** (nested `payload` sort
 {
   "actorId": "user-123",
   "eventType": "USER_LOGIN",
+  "occurredAt": "2026-08-14T11:30:00Z",
   "payload": { "ip": "10.0.0.1" },
   "previousHash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "recordedAt": "2026-08-14T11:37:00Z",
   "resourceId": "sess-abc",
   "resourceType": "SESSION",
-  "sequence": 1,
-  "timestamp": "2026-08-14T11:37:00Z"
+  "sequence": 1
 }
 ```
 
-`timestamp` is ISO-8601 UTC from `Instant.toString()`. `sequence` is a JSON number. `created_at`, `status`, and redaction rows are **not** in the hash.
+`occurredAt` and `recordedAt` are ISO-8601 UTC from `Instant.toString()`. `sequence` is a JSON number. `status` and redaction rows are **not** in the hash. Tampering with either clock after persist still breaks the chain.
 
 ```
 contentHash(n)  = SHA-256(canonical(record n including previousHash))
@@ -136,7 +149,7 @@ Errors: `{ "error", "code", "timestamp" }` via `@ControllerAdvice`.
 
 ## Cross-Cutting
 
-- Validation: `@NotBlank` on required write fields; payload size cap.
+- Validation: `@NotBlank` on required write fields; required `occurredAt`; payload size cap; reject `occurredAt` more than 5 minutes after `recordedAt`.
 - SQL: JPA parameterized queries only.
 - Auth: optional API key on admin/redact in a later pass; rate limiting is a production follow-up.
 - Logs: append, verify result, archive count.

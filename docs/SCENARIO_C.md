@@ -27,7 +27,7 @@ Intentionally under-specified. This file is the clarification **before** code. I
 
 ## Clarified requirement
 
-> Provide a read-only compliance report and export that lists all audit events where `resourceType = CLIENT_ACCOUNT` and `eventType` is one of `ACCOUNT_VIEWED`, `ACCOUNT_UPDATED`, `STATEMENT_DOWNLOADED`, `PERMISSION_GRANTED`, filterable by account (`resourceId`), actor (`actorId`), and time range (`from` / `to`), with immutable evidence that the report data matches the tamper-evident audit chain at report generation time (`chainHeadHash` = latest `contentHash` when the report was built).
+> Provide a read-only compliance report and export that lists all audit events where `resourceType = CLIENT_ACCOUNT` and `eventType` is one of `ACCOUNT_VIEWED`, `ACCOUNT_UPDATED`, `STATEMENT_DOWNLOADED`, `PERMISSION_GRANTED`, filterable by account (`resourceId`), actor (`actorId`), and time range (`from` / `to` on **`occurredAt`**), with immutable evidence that the report data matches the tamper-evident audit chain at report generation time (`chainHeadHash` = latest `contentHash` when the report was built).
 
 This is the only C requirement the code is accountable to.
 
@@ -40,7 +40,7 @@ This is the only C requirement the code is accountable to.
 | `GET` | `/audit/compliance/access-report` | Paginated JSON report + summary |
 | `GET` | `/audit/compliance/access-report/export` | Same filter; `format=csv` or `json` (default json) |
 
-Query params: `resourceId`, `actorId`, `from`, `to`, `page`, `size`. Always constrained to `CLIENT_ACCOUNT` + the access event-type set (not caller-overridable). Include archived rows.
+Query params: `resourceId`, `actorId`, `from`, `to`, `page`, `size`. `from`/`to` are inclusive on **`occurredAt`**. Always constrained to `CLIENT_ACCOUNT` + the access event-type set (not caller-overridable). Include archived rows.
 
 Response:
 

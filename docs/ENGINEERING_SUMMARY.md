@@ -11,7 +11,7 @@ Build a single Spring Boot service over PostgreSQL that (1) appends events onto 
 Why this shape:
 
 - **One global chain** — verify and export stay linear; the assignment’s validation script is “walk the chain.”
-- **Server timestamps** — the log is evidence; the writer must not pick the clock.
+- **Dual clocks** — client `occurredAt` (event time) plus server `recordedAt` (ingest time), both hashed. The PDF allows either; both is the production-grade audit pattern. Query/compliance use `occurredAt`; retention uses `recordedAt`.
 - **Soft archive + redaction overlay** — the two Scenario B constraints (don’t false-break verify; don’t destroy original hashes) both forbid mutating hashed bytes.
 - **Clarify C before coding** — the product sentence is not an API. [SCENARIO_C.md](SCENARIO_C.md) is the contract.
 
@@ -33,7 +33,7 @@ Sequence: A (MVP APIs + tamper test) → B (retention, redaction, export) → C 
 | Runbook | `README.md` |
 | OpenAPI | SpringDoc `/swagger-ui.html` |
 | Build | `build.gradle.kts`, Gradle Wrapper |
-| Code | `com.auditlog` — Spring Boot 3.5 scaffold + Flyway V1 |
+| Code | `com.auditlog` — Spring Boot 3.5 scaffold + Flyway V1 (`occurred_at` / `recorded_at`) |
 
 ---
 
@@ -60,6 +60,7 @@ Sequence: A (MVP APIs + tamper test) → B (retention, redaction, export) → C 
 | Archive looks like a chain break | Soft status only; verify reads all rows | Mixed ACTIVE/ARCHIVED verify test |
 | Scenario C expands into identity/PDF/filings | Written scope boundary | API matches [SCENARIO_C.md](SCENARIO_C.md) only |
 | Canonical form omits a hashed field | Freeze field list in ARCHITECTURE.md | Code review + hash unit tests |
+| Caller backdates `occurredAt` at write | Hashed `recordedAt` is ingest evidence; retention uses `recordedAt` | Dual-clock docs + retention tests |
 
 Validation gate for A (assignment script): write → query → verify intact → SQL update one payload → verify names that sequence and `CONTENT_HASH_MISMATCH`.
 
@@ -70,6 +71,7 @@ Validation gate for A (assignment script): write → query → verify intact →
 - Single process, single PostgreSQL; no multi-region replication of the chain.
 - SHA-256 and a secret-free chain are enough for **detection**, not for preventing a DBA from rewriting the whole table (they can recompute a new chain; detection assumes the attacker misses at least one stored hash or an off-box copy).
 - Payload is JSON objects with dotted paths for redaction; arrays out of scope for v1.
+- Dual clocks: `occurredAt` is client-claimed event time (may be backdated at write); `recordedAt` is server ingest time. Query `from`/`to` and compliance reports use `occurredAt`; retention uses `recordedAt`.
 - “Client account access” = `CLIENT_ACCOUNT` + four event types listed in Scenario C.
 - No production IAM in the timebox; admin/redact may later use a static API key.
 
