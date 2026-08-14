@@ -3,6 +3,7 @@ package com.auditlog.api.error;
 import com.auditlog.domain.AuditQueryService.InvalidAuditQueryException;
 import com.auditlog.domain.AuditRecordNotFoundException;
 import com.auditlog.domain.InvalidAuditEventException;
+import com.auditlog.domain.InvalidComplianceRequestException;
 import com.auditlog.domain.InvalidExportRequestException;
 import com.auditlog.domain.InvalidRedactionException;
 import java.util.stream.Collectors;
@@ -59,6 +60,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(InvalidExportRequestException.class)
     public ResponseEntity<ErrorResponse> onInvalidExport(InvalidExportRequestException ex) {
+        return badRequest(ex.getMessage(), ex.code());
+    }
+
+    @ExceptionHandler(InvalidComplianceRequestException.class)
+    public ResponseEntity<ErrorResponse> onInvalidCompliance(InvalidComplianceRequestException ex) {
         return badRequest(ex.getMessage(), ex.code());
     }
 

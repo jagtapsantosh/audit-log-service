@@ -49,8 +49,8 @@ Sequence: freeze (export subsequence, canonical JSON, empty-chain verify, trigge
 | Pre-impl freeze (export subsequence, canonical JSON, empty-chain, trigger vs tamper, V2 SQL) | Done (2026-08-14) |
 | Scenario A APIs + tests (write, query, verify, tamper detection) | Done (2026-08-14); 66 tests green |
 | Scenario B code + tests (retention, redaction, export + verifier) | Done (2026-08-14); 182 tests green, no Scenario A regressions |
-| Scenario C code + tests | Not started |
-| README runbook | Setup, API table, Scenario A and B validation scripts with real output, test matrix |
+| Scenario C code + tests | Done (2026-08-14); 208 tests green, no A/B regressions |
+| README runbook | Setup, API table, Scenario A–C validation scripts, test matrix |
 | Append-only DB trigger | Not implemented, by decision (needs an app role distinct from the tamper role; see Limitations) |
 
 ---
@@ -71,6 +71,7 @@ Sequence: freeze (export subsequence, canonical JSON, empty-chain verify, trigge
 | Bundle format drifts from what a recipient hashes | Domain bundle serialized directly; tests assert the exact field set | Caught in practice: derived accessors leaked `filter.empty` / `records[].redacted` into a real download, fixed with `@JsonIgnore` and locked by tests |
 | A backdated `occurredAt` keeps a record out of retention | Sweep matches on `recordedAt` only | `RetentionServiceTest` asserts the cutoff is computed from the ingest clock |
 | Scenario C expands into identity/PDF/filings | Written scope boundary | API matches [SCENARIO_C.md](SCENARIO_C.md) only |
+| Report includes logins or non-account events | Frozen `AccessScope`; caller cannot pass `eventType`/`resourceType` | `ComplianceReportIT` seeds noise (`USER_LOGIN`, `RECORD_UPDATED`, `PERMISSION_GRANTED` on `ROLE`) and asserts they are absent |
 | Canonical form omits a hashed field | Freeze field list in ARCHITECTURE.md | Code review + hash unit tests |
 | Caller backdates `occurredAt` at write | Hashed `recordedAt` is ingest evidence; retention uses `recordedAt` | Dual-clock docs + retention tests |
 | Leaked ingest API key | JWT-only for verify, redact, archive, compliance | Auth matrix tests (API key → 403 on admin) |
@@ -111,7 +112,7 @@ Not covered, deliberately: load/performance testing of the O(n) verify walk on l
 - Soft archive never reclaims disk, and there is no un-archive endpoint (a re-run of the sweep will not revert a record whose window later changes).
 - Export is a subsequence of the global chain, not a replay of `/audit/verify`. Recipients cannot recompute per-record `contentHash` when the payload is redacted; they check `bundleHash` (and unredacted records only). `bundleHash` is unkeyed, so anyone who knows the algorithm can re-seal an edited file — which is why unredacted records are re-hashed individually, and why a signature would be the production upgrade.
 - Bundles are capped at 10,000 records and built in memory rather than streamed.
-- Compliance report is a live query with a pinned head hash, not a signed, stored filing.
+- Compliance report is a live query with a pinned head hash, not a signed, stored filing. `chainHeadHash` is the global chain head, which may not itself be an access event.
 - Prototype JWT mint is not corporate SSO. No multi-tenant isolation, no PDF.
 
 These are deliberate timebox cuts, not accidental omissions. Production follow-ups: column encryption or field-level crypto, partition/tier old rows, signed reports, JWKS/IdP, mTLS.

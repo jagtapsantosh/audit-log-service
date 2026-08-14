@@ -76,15 +76,24 @@ abstract class AuditApiIntegrationTest {
 
     /** Redaction and the retention sweep require audit.admin, and reject API keys outright. */
     protected String adminToken() throws Exception {
-        return token("audit.read audit.admin");
+        return token("ops-admin", "ops-admin-secret-dev", "audit.read audit.admin");
+    }
+
+    /** Compliance APIs require audit.compliance; the regulator client is the documented caller. */
+    protected String regulatorToken() throws Exception {
+        return token("regulator", "regulator-secret-dev", "audit.read audit.compliance");
     }
 
     private String token(String scope) throws Exception {
+        return token("ops-admin", "ops-admin-secret-dev", scope);
+    }
+
+    private String token(String clientId, String clientSecret, String scope) throws Exception {
         MvcResult result = mockMvc.perform(post("/auth/token")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"client_id":"ops-admin","client_secret":"ops-admin-secret-dev","scope":"%s"}
-                                """.formatted(scope)))
+                                {"client_id":"%s","client_secret":"%s","scope":"%s"}
+                                """.formatted(clientId, clientSecret, scope)))
                 .andExpect(status().isOk())
                 .andReturn();
         return objectMapper.readTree(result.getResponse().getContentAsString()).get("access_token").asText();

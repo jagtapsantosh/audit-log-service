@@ -44,4 +44,17 @@ public interface AuditRecordStore {
 
     /** Chain-ordered slice for an export subject; {@code limit} bounds the bundle size. */
     List<AuditRecord> findForExport(ExportFilter filter, int limit);
+
+    /**
+     * Access events for Scenario C: {@code CLIENT_ACCOUNT} plus the frozen access event-type set.
+     * Archived rows are included. Optional actor / account / occurredAt bounds come from
+     * {@code filter}.
+     */
+    PageResult<AuditRecord> searchAccess(ComplianceAccessFilter filter, int page, int size);
+
+    /** Same constraints as {@link #searchAccess}, uncapped by page, bounded by {@code limit}. */
+    List<AuditRecord> findAccess(ComplianceAccessFilter filter, int limit);
+
+    /** Totals over the whole matching access set, independent of paging. */
+    AccessSummary summarizeAccess(ComplianceAccessFilter filter);
 }

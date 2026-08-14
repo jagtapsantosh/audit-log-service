@@ -147,6 +147,12 @@ class SecurityFlowIT {
     }
 
     @Test
+    void ingestApiKeyCannotCallCompliance() throws Exception {
+        mockMvc.perform(get("/audit/compliance/access-report").header("X-API-Key", INGEST_KEY))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void invalidClientSecretIsUnauthorized() throws Exception {
         mockMvc.perform(post("/auth/token")
                         .contentType(MediaType.APPLICATION_JSON)

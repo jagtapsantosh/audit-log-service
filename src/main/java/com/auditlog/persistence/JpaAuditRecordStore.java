@@ -1,9 +1,12 @@
 package com.auditlog.persistence;
 
+import com.auditlog.domain.AccessScope;
+import com.auditlog.domain.AccessSummary;
 import com.auditlog.domain.AuditQueryFilter;
 import com.auditlog.domain.AuditRecord;
 import com.auditlog.domain.AuditRecordStore;
 import com.auditlog.domain.CanonicalJson;
+import com.auditlog.domain.ComplianceAccessFilter;
 import com.auditlog.domain.ExportFilter;
 import com.auditlog.domain.PageResult;
 import com.auditlog.domain.RecordStatus;
@@ -123,6 +126,57 @@ public class JpaAuditRecordStore implements AuditRecordStore {
                 .stream()
                 .map(this::toDomain)
                 .toList();
+    }
+
+    @Override
+    public PageResult<AuditRecord> searchAccess(ComplianceAccessFilter filter, int page, int size) {
+        Page<AuditRecordEntity> result = repository.searchAccess(
+                AccessScope.RESOURCE_TYPE,
+                AccessScope.EVENT_TYPES,
+                filter.actorId(),
+                filter.resourceId(),
+                filter.occurredFrom(),
+                filter.occurredTo(),
+                PageRequest.of(page, size, CHAIN_ORDER));
+        return PageResult.of(
+                result.getContent().stream().map(this::toDomain).toList(),
+                page,
+                size,
+                result.getTotalElements());
+    }
+
+    @Override
+    public List<AuditRecord> findAccess(ComplianceAccessFilter filter, int limit) {
+        return repository.findAccess(
+                        AccessScope.RESOURCE_TYPE,
+                        AccessScope.EVENT_TYPES,
+                        filter.actorId(),
+                        filter.resourceId(),
+                        filter.occurredFrom(),
+                        filter.occurredTo(),
+                        PageRequest.ofSize(limit))
+                .stream()
+                .map(this::toDomain)
+                .toList();
+    }
+
+    @Override
+    public AccessSummary summarizeAccess(ComplianceAccessFilter filter) {
+        AccessSummaryRow row = repository.summarizeAccess(
+                AccessScope.RESOURCE_TYPE,
+                AccessScope.EVENT_TYPES,
+                filter.actorId(),
+                filter.resourceId(),
+                filter.occurredFrom(),
+                filter.occurredTo());
+        if (row == null) {
+            return AccessSummary.empty();
+        }
+        return new AccessSummary(
+                row.totalAccessEvents() == null ? 0 : row.totalAccessEvents(),
+                row.uniqueActors() == null ? 0 : row.uniqueActors(),
+                row.earliestEvent(),
+                row.latestEvent());
     }
 
     private static String blankToNull(String value) {

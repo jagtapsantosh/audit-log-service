@@ -22,7 +22,7 @@ docker compose up -d
 
 To start over with an empty chain: `docker compose down -v && docker compose up -d`.
 
-## API (Scenarios A and B)
+## API (Scenarios A–C)
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
@@ -32,6 +32,8 @@ To start over with an empty chain: `docker compose down -v && docker compose up 
 | `GET` | `/audit/export` | `X-API-Key` or JWT, scope `audit.read` | Verifiable bundle for one actor or resource |
 | `POST` | `/audit/events/{id}/redact` | JWT only, scope `audit.admin` | Mask payload fields via overlay |
 | `POST` | `/audit/admin/archive` | JWT only, scope `audit.admin` | Run the retention sweep |
+| `GET` | `/audit/compliance/access-report` | JWT only, scope `audit.compliance` | Access to `CLIENT_ACCOUNT` data |
+| `GET` | `/audit/compliance/access-report/export` | JWT only, scope `audit.compliance` | Same report as JSON or CSV file |
 | `POST` | `/auth/token` | public, rate-limited | Prototype JWT mint |
 
 There is no update or delete endpoint for audit events; `PUT`/`DELETE` on `/audit/events` return **405**.
@@ -308,8 +310,41 @@ curl -sS -X POST http://localhost:8080/auth/token \
   -d 'client_id=ops-admin&client_secret=ops-admin-secret-dev&scope=audit.read'
 ```
 
-The `regulator` client will serve `/audit/compliance/*` in Scenario C; it cannot call admin
-archive/redact (**403**).
+The `regulator` client serves `/audit/compliance/*` (JWT `audit.compliance`). It cannot call admin
+archive/redact (**403**). An ingest API key and the `ops-admin` token are also **403** on compliance
+paths: a leaked write credential must not pull a regulator report.
+
+## Scenario C validation script
+
+The product sentence was "Regulators need to be able to audit access to client account data." The
+clarified contract is in [docs/SCENARIO_C.md](docs/SCENARIO_C.md): only `CLIENT_ACCOUNT` events of
+types `ACCOUNT_VIEWED`, `ACCOUNT_UPDATED`, `STATEMENT_DOWNLOADED`, `PERMISSION_GRANTED`.
+
+```bash
+REG=$(curl -sS -X POST http://localhost:8080/auth/token \
+  -H 'Content-Type: application/json' \
+  -d '{"client_id":"regulator","client_secret":"regulator-secret-dev","scope":"audit.compliance"}' \
+  | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
+
+curl -sS "http://localhost:8080/audit/compliance/access-report?resourceId=acct-1" \
+  -H "Authorization: Bearer $REG"
+```
+
+The report always carries `reportId`, `generatedAt`, and `chainHeadHash` (the live chain head, which
+may be a non-access event). `USER_LOGIN` and `PERMISSION_GRANTED` on a non-account resource do not
+appear. Optional `actorId`, `from`, `to` (on `occurredAt`), `page`, `size`. Archived rows are
+included. Redacted payload paths show `[REDACTED]`.
+
+```bash
+curl -sS -o access-report.json \
+  "http://localhost:8080/audit/compliance/access-report/export" \
+  -H "Authorization: Bearer $REG"
+curl -sS -o access-report.csv \
+  "http://localhost:8080/audit/compliance/access-report/export?format=csv" \
+  -H "Authorization: Bearer $REG"
+```
+
+CSV columns: `sequence,eventType,actorId,resourceType,resourceId,occurredAt,recordedAt,status,archivedAt,contentHash,previousHash,payload,redactedFields`.
 
 Production: terminate TLS at a reverse proxy and validate JWTs from the corporate IdP (JWKS). Disable local mint (`POST /auth/token`) and OpenAPI (`--spring.profiles.active=prod`).
 
@@ -337,6 +372,9 @@ Production: terminate TLS at a reverse proxy and validate JWTs from the corporat
 | `RetentionDefaultWindowIT` | Integration | Default 365-day window does not archive a fresh write, even with an old `occurredAt` |
 | `RedactionIT` | Integration | Masked reads, verify still intact, SQL tamper still caught, auth, error codes |
 | `ExportIT` | Integration | Sparse slices, combined actor+resource filter, recipient-side verification, archived records, auth |
+| `ComplianceReportServiceTest` | Unit (Mockito) | Frozen access scope, head hash vs last access event, summary vs page, overlay, export cap |
+| `ComplianceCsvTest` | Unit | Documented columns; payload quoting; redacted values |
+| `ComplianceReportIT` | Integration | Access vs noise, filters, redaction, archive included, CSV/JSON export, 401/403 matrix |
 | `SecurityFlowIT` | Integration | 401/403 matrix across both credential types, including regulator vs admin |
 
 Integration tests start PostgreSQL 16 via Testcontainers and are skipped (not failed) when Docker is

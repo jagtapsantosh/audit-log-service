@@ -4,7 +4,7 @@ Tamper-evident audit log service. Records are append-only. Any change to a store
 
 Stack: **Java 21**, **Spring Boot 3.5**, **Gradle**, **PostgreSQL 16**, Flyway, JUnit 5, Testcontainers, SpringDoc OpenAPI.
 
-Status: Scenarios A and B implemented (write, query, verify, hybrid auth, tamper tests; retention, redaction, verifiable export). Scenario C follows `IMPLEMENTATION_PLAN.md`.
+Status: Scenarios A, B, and C implemented (write, query, verify, hybrid auth, tamper tests; retention, redaction, verifiable export; compliance access report).
 
 ---
 

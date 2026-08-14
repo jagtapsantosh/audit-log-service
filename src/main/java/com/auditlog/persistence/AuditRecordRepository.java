@@ -105,8 +105,69 @@ public interface AuditRecordRepository extends Repository<AuditRecordEntity, Lon
             @Param("activeStatus") RecordStatus activeStatus,
             @Param("archivedStatus") RecordStatus archivedStatus);
 
-    /** Sets the redaction cache flag. Cannot reach any other column. */
+    /** Sets the cached {@code has_redactions} flag after an overlay row is written. */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE AuditRecordEntity r SET r.hasRedactions = true WHERE r.id = :id")
     int markHasRedactions(@Param("id") long id);
+
+    /**
+     * Scenario C access slice. Resource type and event types are passed in from the adapter, which
+     * hard-wires them to {@code AccessScope} so a caller cannot widen the report. Archived rows are
+     * included; there is no status predicate.
+     */
+    @Query("""
+            SELECT r FROM AuditRecordEntity r
+            WHERE r.resourceType = :resourceType
+              AND r.eventType IN :eventTypes
+              AND r.actorId = COALESCE(:actorId, r.actorId)
+              AND r.resourceId = COALESCE(:resourceId, r.resourceId)
+              AND r.occurredAt >= COALESCE(:occurredFrom, r.occurredAt)
+              AND r.occurredAt <= COALESCE(:occurredTo, r.occurredAt)
+            """)
+    Page<AuditRecordEntity> searchAccess(
+            @Param("resourceType") String resourceType,
+            @Param("eventTypes") Collection<String> eventTypes,
+            @Param("actorId") String actorId,
+            @Param("resourceId") String resourceId,
+            @Param("occurredFrom") Instant occurredFrom,
+            @Param("occurredTo") Instant occurredTo,
+            Pageable pageable);
+
+    @Query("""
+            SELECT r FROM AuditRecordEntity r
+            WHERE r.resourceType = :resourceType
+              AND r.eventType IN :eventTypes
+              AND r.actorId = COALESCE(:actorId, r.actorId)
+              AND r.resourceId = COALESCE(:resourceId, r.resourceId)
+              AND r.occurredAt >= COALESCE(:occurredFrom, r.occurredAt)
+              AND r.occurredAt <= COALESCE(:occurredTo, r.occurredAt)
+            ORDER BY r.sequenceNum ASC
+            """)
+    List<AuditRecordEntity> findAccess(
+            @Param("resourceType") String resourceType,
+            @Param("eventTypes") Collection<String> eventTypes,
+            @Param("actorId") String actorId,
+            @Param("resourceId") String resourceId,
+            @Param("occurredFrom") Instant occurredFrom,
+            @Param("occurredTo") Instant occurredTo,
+            Pageable pageable);
+
+    @Query("""
+            SELECT new com.auditlog.persistence.AccessSummaryRow(
+                    COUNT(r), COUNT(DISTINCT r.actorId), MIN(r.occurredAt), MAX(r.occurredAt))
+              FROM AuditRecordEntity r
+             WHERE r.resourceType = :resourceType
+               AND r.eventType IN :eventTypes
+               AND r.actorId = COALESCE(:actorId, r.actorId)
+               AND r.resourceId = COALESCE(:resourceId, r.resourceId)
+               AND r.occurredAt >= COALESCE(:occurredFrom, r.occurredAt)
+               AND r.occurredAt <= COALESCE(:occurredTo, r.occurredAt)
+            """)
+    AccessSummaryRow summarizeAccess(
+            @Param("resourceType") String resourceType,
+            @Param("eventTypes") Collection<String> eventTypes,
+            @Param("actorId") String actorId,
+            @Param("resourceId") String resourceId,
+            @Param("occurredFrom") Instant occurredFrom,
+            @Param("occurredTo") Instant occurredTo);
 }

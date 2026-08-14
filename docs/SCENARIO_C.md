@@ -2,6 +2,8 @@
 
 Intentionally under-specified. This file is the clarification **before** code. Implementation follows only the statement in [Clarified requirement](#clarified-requirement).
 
+**Status: implemented.** C2–C5 are built and tested (`ComplianceReportServiceTest`, `ComplianceCsvTest`, `ComplianceReportIT`). Deviations from this design are listed under [As built](#as-built).
+
 ---
 
 ## Original statement
@@ -110,3 +112,17 @@ Partial implementation is acceptable only if this file still matches the running
 - Should `PERMISSION_GRANTED` on a non-account resource ever appear? (We say no unless `CLIENT_ACCOUNT`.)
 - Legal hold: skip retention archive for rows that appear in an issued report? (Not implemented.)
 - Do regulators need a watermarked PDF? (No.)
+
+---
+
+## As built
+
+| Area | Decision |
+|------|----------|
+| Pagination | JSON report includes `page`, `size`, `totalElements`, `totalPages` next to `events`. Summary totals are over the **whole** match set, not the current page. |
+| Empty chain | `chainHeadHash` is the genesis value (64 hex zeros) when there are no rows, so the field is always present. |
+| Head vs last access event | `chainHeadHash` is the global chain head (`max sequence_num`), which may be a non-access event. That is the point of the pin. |
+| Export | Same snapshot as the JSON report, as a file. `format=json` (default) or `format=csv`. Capped at 10,000 rows (`COMPLIANCE_EXPORT_TOO_LARGE`). CSV columns are listed in OpenAPI. |
+| Auth | JWT `audit.compliance` only. The ingest API key and the `ops-admin` token (read+admin, no compliance) both receive **403**. |
+
+Still deliberately out: corporate SSO/JWKS, signed JWS filings, unredacted exam mode, stored report archive, legal hold vs retention.

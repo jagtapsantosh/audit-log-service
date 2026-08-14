@@ -151,6 +151,16 @@ Format:
 
 ---
 
+## [2026-08-14] Task: Implement Scenario C (compliance access report)
+
+- Prompt: Move on to Scenario C implementation.
+- Accepted: the clarified requirement in `docs/SCENARIO_C.md` as the only C contract — `CLIENT_ACCOUNT` plus the four access event types, filterable by account/actor/`occurredAt`, JWT `audit.compliance` only, `chainHeadHash` as the live chain head at `generatedAt`, redaction-aware rows, archived rows included. JSON report + CSV/JSON download. No stored report table, no SSO, no PDF, no signed JWS.
+- Modified: JSON report carries paging fields (`page`/`size`/`totalElements`/`totalPages`) that the spec example omitted, because C3 asked for a paginated report; summary totals are over the whole match set. Empty chain pins genesis as `chainHeadHash` so the field is always present. Export is capped at 10,000 rows. `chainHeadHash` is the global head, which a test proves can be a later `USER_LOGOUT` rather than the last access event.
+- Rejected: letting the caller pass `eventType`/`resourceType` (would let a regulator redefine "access"); unredacted exam mode; corporate SSO; editing `IMPLEMENTATION_PLAN.md`.
+- Rationale: the assignment scores how you handle an under-specified sentence. The work was freezing the enum and resource type *before* coding, then proving the report does not leak logins or non-account permission grants, and that the head pin is the live chain rather than "the last row in the report." Quality gate: `./gradlew cleanTest test` — 208 tests, 0 failures, 0 skips, including every A and B suite.
+
+---
+
 ## Later entries
 
-Append here during compliance work. For each: what was prompted, what was kept, what was edited, what was thrown away, and why.
+Append here if a later change revises a frozen decision. For each: what was prompted, what was kept, what was edited, what was thrown away, and why.
