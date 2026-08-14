@@ -138,6 +138,12 @@ class SecurityFlowIT {
 
         mockMvc.perform(post("/audit/admin/archive").header("Authorization", "Bearer " + token))
                 .andExpect(status().isForbidden());
+
+        mockMvc.perform(post("/audit/events/1/redact")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fieldPaths\":[\"ip\"]}"))
+                .andExpect(status().isForbidden());
     }
 
     @Test

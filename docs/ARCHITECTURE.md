@@ -4,7 +4,7 @@ Tamper-evident audit log service. Records are append-only. Any change to a store
 
 Stack: **Java 21**, **Spring Boot 3.5**, **Gradle**, **PostgreSQL 16**, Flyway, JUnit 5, Testcontainers, SpringDoc OpenAPI.
 
-Status: Scenario A implemented (write, query, verify, hybrid auth, tamper tests). Scenarios B and C follow `IMPLEMENTATION_PLAN.md`.
+Status: Scenarios A and B implemented (write, query, verify, hybrid auth, tamper tests; retention, redaction, verifiable export). Scenario C follows `IMPLEMENTATION_PLAN.md`.
 
 ---
 
@@ -18,6 +18,8 @@ Status: Scenario A implemented (write, query, verify, hybrid auth, tamper tests)
 | API | `AuditQueryController` | `GET /audit/events` — filter, paginate, apply redaction view |
 | API | `AuditVerifyController` | `GET /audit/verify` — walk full chain |
 | API | `AuditExportController` | `GET /audit/export` — verifiable bundle |
+| API | `AuditRedactionController` | `POST /audit/events/{id}/redact` — overlay redaction |
+| API | `AuditAdminController` | `POST /audit/admin/archive` — retention sweep |
 | API | `ComplianceReportController` | `GET /audit/compliance/access-report` (+ export) |
 | API | `TokenController` | Prototype only: `POST /auth/token` (client credentials JWT) |
 | Config | `ApiKeyAuthenticationFilter` | `X-API-Key` → hashed lookup → Spring authorities |
@@ -29,11 +31,13 @@ Status: Scenario A implemented (write, query, verify, hybrid auth, tamper tests)
 | Domain | `AuditVerifyService` | Ordered walk, first-violation report |
 | Domain | `RetentionService` | Soft-archive past `audit.retention.days` |
 | Domain | `RedactionService` | Overlay only; never mutate hashed fields |
+| Domain | `RedactionOverlay` | Masks dotted field paths on a copy, per read |
 | Domain | `ExportBundleService` | Self-contained JSON bundle + `bundleHash` |
 | Domain | `ExportVerifier` | Standalone recipient-side bundle check |
 | Domain | `ComplianceReportService` | Point-in-time access report + chain head hash |
-| Persistence | `AuditRecordRepository` | Insert + query only; no update/delete of event fields |
+| Persistence | `AuditRecordRepository` | Insert + query, plus two column-scoped UPDATEs for retention/redaction metadata; no delete |
 | Persistence | `JpaAuditRecordStore` | Implements the domain's `AuditRecordStore` port; entity ↔ domain mapping |
+| Persistence | `JpaAuditRedactionStore` | Append-only overlay rows |
 | Persistence | PostgreSQL | `JSONB` payload, unique `sequence_num` |
 
 Package root: `com.auditlog` (`api`, `domain`, `persistence`, `config`). The domain layer depends on
@@ -64,9 +68,11 @@ Indexes: `actor_id`; `(resource_type, resource_id)`; `event_type`; `occurred_at`
 
 ### Scenario B extensions (`V2__retention_and_redaction.sql`)
 
-`audit_records` adds `status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'`, `archived_at TIMESTAMPTZ`, `has_redactions BOOLEAN NOT NULL DEFAULT FALSE`.
+`audit_records` adds `status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'` (with a `CHECK` for `ACTIVE`/`ARCHIVED`), `archived_at TIMESTAMPTZ`, `has_redactions BOOLEAN NOT NULL DEFAULT FALSE`. Indexed on `status`.
 
-`audit_redactions`: `id`, `audit_record_id`, `field_path`, `redacted_at`, `redacted_by`, `reason`. Overlay only — payload bytes used for hashing are never rewritten.
+`audit_redactions`: `id`, `audit_record_id`, `field_path`, `redacted_at`, `redacted_by`, `reason`, unique on `(audit_record_id, field_path)` so redacting a path twice is a no-op. Overlay only — payload bytes used for hashing are never rewritten.
+
+These three columns are the only mutable state on `audit_records`, and they sit outside the hash pre-image. The entity exposes no setters at all: retention and redaction change them through two `@Modifying` statements that name their columns explicitly, so no code path can load a record and rewrite hashed content.
 
 ---
 
@@ -158,11 +164,15 @@ Redaction does not change this walk: verify always uses stored original payload.
 | `GET` | `/audit/compliance/access-report/export` | CSV/JSON download |
 | `POST` | `/auth/token` | Prototype JWT mint (client credentials) |
 
-No update or delete of audit event content: those verbs are unmapped (**405**), the repository interface declares no update/delete method, and every entity column is `updatable = false`. Query defaults: page size 50, max 200, order `sequence_num ASC`. Payload max 64KB and must be a JSON object. Unknown request fields are rejected so a caller cannot believe it supplied a sequence number, ingest time, or hash.
+No update or delete of audit event content: those verbs are unmapped (**405**), every hashed entity column is `updatable = false`, and the repository's only two UPDATE statements are restricted to retention and redaction metadata. Query defaults: page size 50, max 200, order `sequence_num ASC`; archived records are excluded unless `includeArchived=true`. Payload max 64KB and must be a JSON object. Unknown request fields are rejected so a caller cannot believe it supplied a sequence number, ingest time, hash, or the operator id on a redaction.
+
+### Export bundle
+
+`GET /audit/export` serializes the domain `ExportBundle` directly rather than through a parallel API DTO, because `bundleHash` is computed over exactly those bytes and a second wire type could drift from what a recipient hashes. The document's field set is locked by tests: derived accessors must not leak into it. A filtered export is a sparse slice of the global chain, so the bundle proves "unaltered since export" (plus per-record re-hashing for unredacted records) rather than replayable chain integrity.
 
 Errors: `{ "error", "code", "timestamp" }` via `@ControllerAdvice` (including 401/403; no key-enumeration messages). A broken chain is still `200` with `intact: false` — the report succeeded.
 
-**Prevention vs detection.** Enforcement above is application-level; a DBA with SQL access can still rewrite rows, which is precisely what verification exposes. A database trigger that rejects writes to hashed columns for the *application* role is designed in [SCENARIO_B.md](SCENARIO_B.md) and deferred to Scenario B, because it requires splitting the app role from the owner role the assignment's tamper step uses.
+**Prevention vs detection.** Enforcement above is application-level; a DBA with SQL access can still rewrite rows, which is precisely what verification exposes. A database trigger that rejects writes to hashed columns for the *application* role is designed in [SCENARIO_B.md](SCENARIO_B.md) and remains deliberately unimplemented: it needs a lower-privilege app role separate from the owner role the assignment's tamper step uses, which would change the local stack's credentials and how tests connect for a guarantee this prototype already documents as detection rather than prevention.
 
 ### API security (hybrid)
 
@@ -201,5 +211,5 @@ TLS at the reverse proxy in production. Rate limit per IP on `/auth/token` (~10/
 - Validation: `@NotBlank` on required write fields; required `occurredAt`; payload size cap; reject `occurredAt` more than 5 minutes after `recordedAt`.
 - SQL: JPA parameterized queries only.
 - Auth: hybrid API key + JWT (see [API security](#api-security-hybrid)); implemented. Filters and `POST /auth/token` are live.
-- Logs: append, verify result, archive count; never log credentials.
-- Metrics: `audit.events.written`, `audit.verify.duration`, `audit.chain.intact`.
+- Logs: append, verify result, archive count, redacted paths with operator and reason, export size and `bundleHash`; never log credentials or redacted values.
+- Metrics: `audit.events.written`, `audit.verify.duration`, `audit.chain.intact`, `audit.records.archived`, `audit.redactions.applied`.

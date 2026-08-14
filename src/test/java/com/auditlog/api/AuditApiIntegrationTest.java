@@ -71,11 +71,20 @@ abstract class AuditApiIntegrationTest {
 
     /** Verify is JWT-only, so integration tests must mint a token like any other reader would. */
     protected String readerToken() throws Exception {
+        return token("audit.read");
+    }
+
+    /** Redaction and the retention sweep require audit.admin, and reject API keys outright. */
+    protected String adminToken() throws Exception {
+        return token("audit.read audit.admin");
+    }
+
+    private String token(String scope) throws Exception {
         MvcResult result = mockMvc.perform(post("/auth/token")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"client_id":"ops-admin","client_secret":"ops-admin-secret-dev","scope":"audit.read"}
-                                """))
+                                {"client_id":"ops-admin","client_secret":"ops-admin-secret-dev","scope":"%s"}
+                                """.formatted(scope)))
                 .andExpect(status().isOk())
                 .andReturn();
         return objectMapper.readTree(result.getResponse().getContentAsString()).get("access_token").asText();

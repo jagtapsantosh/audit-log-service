@@ -90,6 +90,16 @@ class HashChainServiceTest {
     }
 
     @Test
+    @DisplayName("retention and redaction metadata are not hashed, so archive/redact cannot break verify")
+    void statusAndRedactionMetadataAreOutsideThePreImage() {
+        assertThat(hashChainService.canonicalPreImage(goldenInput()))
+                .doesNotContain("status")
+                .doesNotContain("archived")
+                .doesNotContain("redact")
+                .doesNotContain("ARCHIVED");
+    }
+
+    @Test
     @DisplayName("nanosecond precision is truncated, so a database round trip re-hashes identically")
     void ignoresSubMicrosecondPrecision() {
         ChainInput nanos = copy(goldenInput())

@@ -1,10 +1,14 @@
 package com.auditlog.api.error;
 
 import com.auditlog.domain.AuditQueryService.InvalidAuditQueryException;
+import com.auditlog.domain.AuditRecordNotFoundException;
 import com.auditlog.domain.InvalidAuditEventException;
+import com.auditlog.domain.InvalidExportRequestException;
+import com.auditlog.domain.InvalidRedactionException;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
@@ -46,6 +50,32 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(InvalidAuditQueryException.class)
     public ResponseEntity<ErrorResponse> onInvalidQuery(InvalidAuditQueryException ex) {
         return badRequest(ex.getMessage(), "INVALID_QUERY");
+    }
+
+    @ExceptionHandler(InvalidRedactionException.class)
+    public ResponseEntity<ErrorResponse> onInvalidRedaction(InvalidRedactionException ex) {
+        return badRequest(ex.getMessage(), ex.code());
+    }
+
+    @ExceptionHandler(InvalidExportRequestException.class)
+    public ResponseEntity<ErrorResponse> onInvalidExport(InvalidExportRequestException ex) {
+        return badRequest(ex.getMessage(), ex.code());
+    }
+
+    @ExceptionHandler(AuditRecordNotFoundException.class)
+    public ResponseEntity<ErrorResponse> onRecordNotFound(AuditRecordNotFoundException ex) {
+        return status(HttpStatus.NOT_FOUND, ex.getMessage(), "RECORD_NOT_FOUND");
+    }
+
+    /**
+     * Backstop for the unique constraint on {@code (audit_record_id, field_path)}. The service already
+     * treats a repeat redaction as a no-op, so reaching this means two concurrent requests raced.
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ErrorResponse> onDataIntegrityViolation(DataIntegrityViolationException ex) {
+        log.warn("Rejected request that violated a database constraint", ex);
+        return status(HttpStatus.CONFLICT, "Request conflicts with the current state of the record",
+                "CONFLICT");
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)

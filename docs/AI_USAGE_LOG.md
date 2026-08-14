@@ -130,6 +130,27 @@ Format:
 
 ---
 
+## [2026-08-14] Task: Purge the confidential assignment PDF from git history
+
+- Prompt: Rewrite the git history to remove the confidential PDF, without altering existing commits or files.
+- Accepted: `git filter-branch --index-filter 'git rm --cached --ignore-unmatch -- <pdf>' -- main`, scoped to the single path and to `main`, with empty-commit pruning left off so no commit could disappear. The file had been added in the root-adjacent `3e21120` and lived in four commit trees before being removed in the tip commit, so the blob was still fully reachable. Then `git push --force-with-lease origin main`, which is why the lease matters: it refuses the push if the remote moved since the last fetch.
+- Verified rather than assumed: all six commits survive with byte-identical messages, authors, committers, and both timestamps; every file blob in every commit (190 path/SHA pairs, excluding the PDF) is unchanged; the `HEAD` tree hash is still `82cf050`, proving the current working files were untouched; the path appears in zero commits locally and in zero commits on `origin/main`.
+- Rejected: `git filter-repo` (would have needed installing, and its post-run `git reset --hard` is a hazard in a dirty tree); copying the repository to `/tmp` as a backup, since that would have duplicated confidential material outside the repo when `refs/original`, the untouched remote-tracking ref, and the reflog already provided three in-repo rollback paths; dropping `refs/original` immediately, kept for now as the rollback net.
+- Limitation stated to the engineer: commit SHAs necessarily changed (a commit's identity includes its tree), and GitHub retains unreachable objects for a period, so the blob may remain fetchable by its SHA until their garbage collection runs. Full certainty there requires a request to GitHub Support.
+- Rationale: §0.2 forbids re-hosting the assignment, while §7 requires submitting the repository *with* its history, so leaving the blob reachable would have handed Schwab's confidential brief back inside the deliverable. The care went into proving the rewrite was surgical, because "trust me, only the PDF changed" is not something a reviewer should have to take on faith in a repository whose whole subject is tamper evidence.
+
+---
+
+## [2026-08-14] Task: Implement Scenario B (retention, redaction, export)
+
+- Prompt: Implement Scenario B carefully per the documentation and specification. Do not break previous functionality. Write tests for all edge cases.
+- Accepted: the frozen design — soft archive on `recordedAt` (never delete); redaction as an overlay table so hashed payload is untouched; export as a sparse subsequence with `bundleHash` plus per-record re-hash only when unredacted. Application-layer append-only stays: hashed columns `updatable = false`, no delete methods, and the only two UPDATE statements name `status`/`archived_at`/`has_redactions`. JWT-only for redact and archive; API key or JWT `audit.read` for export. Standalone `ExportVerifier` with `./gradlew verifyExport`.
+- Modified: `redactedBy` is taken from the JWT `sub` (the request DTO has no such field). Redaction is all-or-nothing per request, idempotent per path, max 50 paths, dotted paths only. Export includes archived records and is capped at 10,000. Bundle serialization is the domain object itself so `bundleHash` cannot drift. Added edge-case coverage the first pass did not have: default 365-day window does not archive a fresh write even with a six-year-old `occurredAt`; regulator JWT cannot redact; an archived record can still be redacted without breaking verify; actor and resource export filters combine; hash pre-image contains no retention/redaction metadata.
+- Rejected: append-only DB trigger (still needs an app role distinct from the tamper role); array-index field paths; mutating payload and recomputing the hash; hard delete or tombstones; signing `bundleHash`; editing `IMPLEMENTATION_PLAN.md`.
+- Rationale: Scenario B's two easy failures are a false verify break after archive/redact, and treating a filtered export as a mini-chain. Tests are written around those claims (redact then verify intact then SQL-tamper still `CONTENT_HASH_MISMATCH`; sparse sequences accepted by `ExportVerifier`; resealed edited unredacted records still fail content re-hash). Quality gate: `./gradlew cleanTest test` — 182 tests, 0 failures, 0 skips, including the original Scenario A suites.
+
+---
+
 ## Later entries
 
-Append here during retention, redaction, export, and compliance work. For each: what was prompted, what was kept, what was edited, what was thrown away, and why.
+Append here during compliance work. For each: what was prompted, what was kept, what was edited, what was thrown away, and why.

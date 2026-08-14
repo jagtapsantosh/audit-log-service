@@ -44,7 +44,11 @@ springdoc:
 
 audit:
   retention:
+    # Measured against recorded_at (ingest time), so a backdated occurredAt cannot keep a row hot.
     days: 365
+    sweep:
+      enabled: true
+      cron: "0 30 3 * * *"
   security:
     pepper: ${AUDIT_SECURITY_PEPPER:dev-only-pepper-not-for-production}
     jwt:

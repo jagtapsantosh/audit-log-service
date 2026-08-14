@@ -1,7 +1,10 @@
 package com.auditlog.persistence;
 
+import com.auditlog.domain.RecordStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -13,9 +16,14 @@ import org.hibernate.type.SqlTypes;
 /**
  * Row mapping for {@code audit_records}.
  *
- * <p>Every business column is {@code updatable = false} and there are no setters, so Hibernate can
- * only ever issue an INSERT for this entity. Rewriting a stored record requires going around the
- * application to raw SQL, which is exactly what chain verification is designed to detect.
+ * <p>Every hashed column is {@code updatable = false} and the class has no setters at all, so
+ * Hibernate can only ever issue an INSERT for this entity. Rewriting a stored record requires going
+ * around the application to raw SQL, which is exactly what chain verification is designed to detect.
+ *
+ * <p>Scenario B adds three columns that are not part of the hash pre-image — {@code status},
+ * {@code archived_at}, {@code has_redactions}. They are still not settable here: retention and
+ * redaction change them through the narrowly scoped bulk statements in
+ * {@link AuditRecordRepository}, so there is no code path that can load a record and mutate it.
  */
 @Entity
 @Table(name = "audit_records")
@@ -59,6 +67,18 @@ public class AuditRecordEntity {
     @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "previous_hash", nullable = false, updatable = false, length = 64)
     private String previousHash;
+
+    /** Retention state. Outside the hash, so archiving cannot break verification. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 20)
+    private RecordStatus status = RecordStatus.ACTIVE;
+
+    @Column(name = "archived_at")
+    private Instant archivedAt;
+
+    /** Cache of "this record has overlay rows", so reads can skip the join when false. */
+    @Column(name = "has_redactions", nullable = false)
+    private boolean hasRedactions;
 
     protected AuditRecordEntity() {
         // for Hibernate
@@ -130,5 +150,17 @@ public class AuditRecordEntity {
 
     public String getPreviousHash() {
         return previousHash;
+    }
+
+    public RecordStatus getStatus() {
+        return status;
+    }
+
+    public Instant getArchivedAt() {
+        return archivedAt;
+    }
+
+    public boolean isHasRedactions() {
+        return hasRedactions;
     }
 }

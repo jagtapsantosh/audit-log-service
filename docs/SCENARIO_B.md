@@ -2,6 +2,8 @@
 
 Extends Scenario A. Three problems: archive old records without false verify failures; redact sensitive payload fields without breaking the hash chain; export a self-contained verifiable bundle.
 
+**Status: implemented.** B1–B5 are built and tested (`RetentionIT`, `RedactionIT`, `ExportIT`, plus unit tests for the overlay, bundle hash, and verifier). Deviations from this design, and what stayed out, are listed under [As built](#as-built).
+
 ---
 
 ## B1. Retention
@@ -152,3 +154,27 @@ Document this split in README:
 - Redact `accountNumber`; GET event shows `[REDACTED]`; verify intact.
 - SQL `UPDATE` of original payload still yields `CONTENT_HASH_MISMATCH`.
 - Export for an actor (sparse sequences); `ExportVerifier` accepts despite gaps; after editing the file, `bundleHash` fails.
+
+All five were run against a live stack and are captured in the README's Scenario B script; each is also an automated test.
+
+---
+
+## As built
+
+Decisions taken during implementation that this document did not pin down:
+
+| Area | Decision |
+|------|----------|
+| V2 schema | Added beyond the frozen DDL: a `CHECK` on `status`, a unique constraint on `(audit_record_id, field_path)`, and indexes on `status` and `audit_record_id`. Verified by migrating onto a populated Scenario A database. |
+| Mutability | `status` / `archived_at` / `has_redactions` are changed only by two column-scoped `@Modifying` statements. The entity keeps no setters, so nothing can load a record and rewrite hashed content. |
+| `redactedBy` | Taken from the JWT `sub`. The request DTO has no such field, so sending one is rejected as an unknown field rather than silently trusted. |
+| Redaction semantics | All-or-nothing per request (an unknown path rejects the whole call), idempotent per path, max 50 paths per request. Paths are dotted; array indexes are rejected rather than half-supported. |
+| Retention trigger point | `POST /audit/admin/archive` plus a daily cron (`audit.retention.sweep.enabled`, `audit.retention.sweep.cron`, default 03:30 UTC). |
+| Export scope | Archived records are included — an export is evidence, and silently dropping them would misrepresent the subject's history. Bundles are capped at 10,000 records (`EXPORT_TOO_LARGE`). |
+| Bundle wire format | The domain `ExportBundle` is serialized directly, because `bundleHash` covers those exact bytes. Tests lock the field set: an early implementation leaked derived accessors (`filter.empty`, `records[].redacted`) into the document, which was found by inspecting a real download. |
+| `ExportVerifier` | Standalone, no Spring or database. Runnable as `./gradlew verifyExport --args=bundle.json`; exits non-zero when the bundle is not intact. |
+
+Still deliberately out:
+
+- **Append-only DB trigger.** Needs a lower-privilege app role distinct from the owner the tamper step uses; see [ARCHITECTURE.md](ARCHITECTURE.md#api-security-hybrid). This prototype's guarantee stays detection, not prevention.
+- **Array-addressable field paths**, record-level deletion, and payload encryption.

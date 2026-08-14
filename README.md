@@ -22,16 +22,21 @@ docker compose up -d
 
 To start over with an empty chain: `docker compose down -v && docker compose up -d`.
 
-## API (Scenario A)
+## API (Scenarios A and B)
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
 | `POST` | `/audit/events` | `X-API-Key` or JWT, scope `audit.write` | Append one event |
 | `GET` | `/audit/events` | `X-API-Key` or JWT, scope `audit.read` | Filter + paginate |
 | `GET` | `/audit/verify` | JWT only, scope `audit.read` | Walk the chain, report integrity |
+| `GET` | `/audit/export` | `X-API-Key` or JWT, scope `audit.read` | Verifiable bundle for one actor or resource |
+| `POST` | `/audit/events/{id}/redact` | JWT only, scope `audit.admin` | Mask payload fields via overlay |
+| `POST` | `/audit/admin/archive` | JWT only, scope `audit.admin` | Run the retention sweep |
 | `POST` | `/auth/token` | public, rate-limited | Prototype JWT mint |
 
 There is no update or delete endpoint for audit events; `PUT`/`DELETE` on `/audit/events` return **405**.
+Redaction and archiving are `POST`s that add metadata beside a record — neither rewrites a stored
+payload, a clock, or a hash, so both leave the chain verifiable.
 
 **Timestamps.** The write API takes the caller's `occurredAt` (the assignment's `timestamp`; the name
 `timestamp` is accepted as an alias) and the server stamps `recordedAt` at ingest. Both are hashed.
@@ -128,6 +133,162 @@ Editing either timestamp is detected the same way, because both clocks are hashe
 
 Reset before demoing again: `docker compose down -v && docker compose up -d`.
 
+## Scenario B validation script
+
+Retention, redaction, and bulk export. Output below is captured from a real run.
+
+### 1. Redact a sensitive field (JWT `audit.admin`)
+
+Append an event whose payload holds sensitive values, then redact two paths — one top level, one
+nested:
+
+```bash
+TOKEN=$(curl -sS -X POST http://localhost:8080/auth/token \
+  -H 'Content-Type: application/json' \
+  -d '{"client_id":"ops-admin","client_secret":"ops-admin-secret-dev","scope":"audit.read audit.admin"}' \
+  | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
+
+curl -sS -X POST http://localhost:8080/audit/events \
+  -H "Content-Type: application/json" -H "X-API-Key: $KEY" \
+  -d '{"eventType":"ACCOUNT_VIEWED","actorId":"user-123","resourceType":"CLIENT_ACCOUNT",
+       "resourceId":"acct-1","occurredAt":"2026-08-14T11:30:00Z",
+       "payload":{"accountNumber":"1234-5678-9012","customer":{"ssn":"111-22-3333","tier":"gold"},"ip":"10.0.0.1"}}'
+
+curl -sS -X POST http://localhost:8080/audit/events/6/redact \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+  -d '{"fieldPaths":["accountNumber","customer.ssn"],"reason":"GDPR erasure request 42"}'
+```
+
+```json
+{"id":6,"sequence":6,"eventType":"ACCOUNT_VIEWED","actorId":"user-123",
+ "payload":{"ip":"10.0.0.1","customer":{"ssn":"[REDACTED]","tier":"gold"},"accountNumber":"[REDACTED]"},
+ "contentHash":"3bb45fd9...","previousHash":"ce227809...","status":"ACTIVE",
+ "redactedFields":["accountNumber","customer.ssn"]}
+```
+
+`redactedBy` is taken from the JWT subject; sending it in the body is rejected as an unknown field.
+Unknown paths return **400** `UNKNOWN_FIELD_PATH`, array indexes return **400** `INVALID_FIELD_PATH`,
+and an API key gets **403**. Redacting the same path twice is a no-op.
+
+### 2. The chain is still intact — and a real SQL edit is still caught
+
+```bash
+curl -sS http://localhost:8080/audit/verify -H "Authorization: Bearer $TOKEN"
+# {"intact":true,"totalRecords":6}
+
+docker compose exec postgres psql -U auditlog -d auditlog -t \
+  -c "select payload::text from audit_records where id = 6;"
+# {"ip": "10.0.0.1", "customer": {"ssn": "111-22-3333", ...}, "accountNumber": "1234-5678-9012"}
+```
+
+The original payload is still stored, which is exactly why verification passes after a redaction — and
+why redaction is not a laundering path for tampering:
+
+```bash
+docker compose exec postgres psql -U auditlog -d auditlog \
+  -c "UPDATE audit_records SET payload = '{\"accountNumber\":\"0000-0000-0000\"}' WHERE id = 6;"
+
+curl -sS http://localhost:8080/audit/verify -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{"intact":false,"totalRecords":6,"firstViolation":{"sequence":6,"recordId":6,
+ "violationType":"CONTENT_HASH_MISMATCH","expectedHash":"a000face...","actualHash":"3bb45fd9...",
+ "detail":"stored contentHash does not match a re-hash of the stored record"}}
+```
+
+Trade-off owned: the overlay hides values from API consumers, not from anyone with a SQL connection.
+Production would add field-level encryption.
+
+### 3. Retention sweep
+
+The window is measured against `recordedAt`, so a backdated `occurredAt` cannot keep a row hot. The
+default is 365 days; start the service with `AUDIT_RETENTION_DAYS=0` to see the sweep act on a fresh
+database.
+
+```bash
+curl -sS -X POST http://localhost:8080/audit/admin/archive -H "Authorization: Bearer $TOKEN"
+# {"archived":6,"cutoff":"2026-08-14T16:41:42.503743Z","retentionDays":0}
+
+curl -sS "http://localhost:8080/audit/events" -H "X-API-Key: $KEY"
+# totalElements: 0   — archived records leave normal reads
+
+curl -sS "http://localhost:8080/audit/events?includeArchived=true" -H "X-API-Key: $KEY"
+# totalElements: 6, status ARCHIVED, archivedAt set, contentHash unchanged
+
+curl -sS http://localhost:8080/audit/verify -H "Authorization: Bearer $TOKEN"
+# {"intact":true,"totalRecords":6}   — no false break from archiving
+```
+
+Nothing is ever deleted: a hard delete would leave a sequence gap or orphan a successor's
+`previousHash`, which verification would correctly report as a break. The cost is storage growth, which
+production would address with partitioning or tiering. A daily sweep also runs on a schedule
+(`audit.retention.sweep.enabled`, `audit.retention.sweep.cron`).
+
+### 4. Export a verifiable bundle
+
+```bash
+curl -sS -o bundle.json "http://localhost:8080/audit/export?actorId=user-123" -H "X-API-Key: $KEY"
+```
+
+```json
+{
+  "exportVersion": "1.0",
+  "exportedAt": "2026-08-14T16:40:27.759066Z",
+  "filter": { "actorId": "user-123" },
+  "genesisHash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "records": [
+    {
+      "sequence": 6, "eventType": "ACCOUNT_VIEWED", "actorId": "user-123",
+      "resourceType": "CLIENT_ACCOUNT", "resourceId": "acct-1",
+      "occurredAt": "2026-08-14T11:30:00Z", "recordedAt": "2026-08-14T16:34:31.732342Z",
+      "contentHash": "3bb45fd9...", "previousHash": "ce227809...",
+      "payload": { "ip": "10.0.0.1", "customer": { "ssn": "[REDACTED]", "tier": "gold" },
+                   "accountNumber": "[REDACTED]" },
+      "redactedFields": ["accountNumber", "customer.ssn"]
+    }
+  ],
+  "bundleHash": "75050ee7a0e7d9573f8754db56657a1056a0ec10c14084e873420dfae2ebcf07"
+}
+```
+
+Requires `actorId` or `resourceId` (**400** `EXPORT_SUBJECT_REQUIRED` otherwise). Archived records are
+included, because an export is evidence. Bundles are capped at 10,000 records.
+
+### 5. Verify the bundle as the recipient
+
+`ExportVerifier` is a standalone class with no Spring, database, or network dependency:
+
+```bash
+./gradlew verifyExport --args=bundle.json
+```
+
+```
+bundleHashValid=true intact=true
+records=1 rehashed=0 skippedRedacted=1
+findings=none
+```
+
+Edit any byte of the file and it fails (a non-zero exit shows up as `BUILD FAILED`):
+
+```
+bundleHashValid=false intact=false
+records=1 rehashed=0 skippedRedacted=1
+findings=[bundleHash mismatch: file declares 75050ee7... but its contents hash to 7970aca6...]
+```
+
+**What the bundle does and does not prove.** A filtered export is a *sparse slice* of the global
+chain: sequence numbers have gaps and most `previousHash` values point at records that are not in the
+file, so a recipient cannot replay `/audit/verify` from it. The algorithm is therefore:
+
+1. Recompute `bundleHash` over the canonical document with `bundleHash` removed → proves the file has
+   not been altered since export.
+2. Re-hash each record whose `redactedFields` is empty and compare to the server's `contentHash` →
+   catches an edit even if the attacker re-seals `bundleHash`.
+3. Skip that re-hash for redacted records: the file holds a masked payload while the hash covers the
+   original. Their integrity stays with `GET /audit/verify` on the service.
+4. Never fail on sequence gaps.
+
 ## Auth behaviour
 
 ```bash
@@ -163,11 +324,20 @@ Production: terminate TLS at a reverse proxy and validate JWTs from the corporat
 | `CanonicalJsonTest`, `HashChainServiceTest` | Unit | Canonical bytes, golden hash vector, every hashed field, clock precision |
 | `AuditWriteServiceTest` | Unit (Mockito) | Genesis link, sequence assignment, lock-before-read, clock skew, payload rules |
 | `AuditVerifyServiceTest` | Unit (Mockito) | Empty chain, intact chain, all three violation types, first-violation-only |
-| `AuditQueryServiceTest` | Unit (Mockito) | Page defaults and clamping, inverted ranges |
-| `ChainVerificationIT` | Integration | The validation script above, including the SQL tamper |
+| `AuditQueryServiceTest` | Unit (Mockito) | Page defaults and clamping, inverted ranges, overlay applied on read |
+| `RedactionOverlayTest` | Unit | Path syntax, nested paths, unknown paths, arrays rejected, stored payload untouched |
+| `RedactionServiceTest` | Unit (Mockito) | Idempotency, all-or-nothing validation, operator identity, micros precision |
+| `RetentionServiceTest` | Unit (Mockito) | Cutoff maths on the ingest clock, zero-day window, no delete path |
+| `ExportBundleServiceTest` | Unit (Mockito) | Bundle hash stability and sensitivity, exact wire format, size cap |
+| `ExportVerifierTest` | Unit | Tampered files, re-sealed files, gaps, redacted records, malformed bundles |
+| `ChainVerificationIT` | Integration | The Scenario A validation script, including the SQL tamper |
 | `AuditEventApiIT` | Integration | Write contract, filters, paging, `timestamp` alias, 405 on update/delete |
 | `ConcurrentAppendIT` | Integration | 10 parallel writers produce a contiguous, intact chain |
-| `SecurityFlowIT` | Integration | 401/403 matrix across both credential types |
+| `RetentionIT` | Integration | Sweep, `includeArchived`, mixed ACTIVE/ARCHIVED verify, redact-after-archive, auth |
+| `RetentionDefaultWindowIT` | Integration | Default 365-day window does not archive a fresh write, even with an old `occurredAt` |
+| `RedactionIT` | Integration | Masked reads, verify still intact, SQL tamper still caught, auth, error codes |
+| `ExportIT` | Integration | Sparse slices, combined actor+resource filter, recipient-side verification, archived records, auth |
+| `SecurityFlowIT` | Integration | 401/403 matrix across both credential types, including regulator vs admin |
 
 Integration tests start PostgreSQL 16 via Testcontainers and are skipped (not failed) when Docker is
 not running; unit tests always run. Known gaps and trade-offs are listed in

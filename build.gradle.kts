@@ -39,3 +39,14 @@ dependencies {
 tasks.withType<Test> {
     useJUnitPlatform()
 }
+
+/**
+ * Recipient-side check for an exported bundle, runnable without starting the service:
+ * `./gradlew verifyExport --args=bundle.json`
+ */
+tasks.register<JavaExec>("verifyExport") {
+    group = "verification"
+    description = "Verify an exported audit bundle file"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass = "com.auditlog.domain.ExportVerifier"
+}

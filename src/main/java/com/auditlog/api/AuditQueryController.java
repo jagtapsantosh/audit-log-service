@@ -27,7 +27,9 @@ public class AuditQueryController {
     @Operation(
             summary = "Query audit events",
             description = "Filters combine with AND. Results are always ordered by chain sequence, so "
-                    + "paging stays stable while new events are appended. Requires scope audit.read.")
+                    + "paging stays stable while new events are appended. Archived records are hidden "
+                    + "unless includeArchived=true, and redacted payload paths are returned as "
+                    + "[REDACTED]. Requires scope audit.read.")
     @SecurityRequirement(name = "apiKey")
     @SecurityRequirement(name = "bearerAuth")
     @GetMapping("/audit/events")
@@ -44,13 +46,15 @@ public class AuditQueryController {
             @RequestParam(required = false) Instant recordedFrom,
             @Parameter(description = "Inclusive upper bound on recordedAt (server ingest clock)")
             @RequestParam(required = false) Instant recordedTo,
+            @Parameter(description = "Include records archived by the retention policy; default false")
+            @RequestParam(required = false, defaultValue = "false") boolean includeArchived,
             @Parameter(description = "Zero-based page index")
             @RequestParam(required = false) Integer page,
             @Parameter(description = "Page size; default 50, maximum 200")
             @RequestParam(required = false) Integer size
     ) {
-        AuditQueryFilter filter = new AuditQueryFilter(
-                actorId, resourceType, resourceId, eventType, from, to, recordedFrom, recordedTo);
+        AuditQueryFilter filter = new AuditQueryFilter(actorId, resourceType, resourceId, eventType,
+                from, to, recordedFrom, recordedTo, includeArchived);
         return PagedResponse.from(queryService.search(filter, page, size), AuditEventResponse::from);
     }
 }

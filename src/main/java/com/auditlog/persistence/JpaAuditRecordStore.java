@@ -4,7 +4,10 @@ import com.auditlog.domain.AuditQueryFilter;
 import com.auditlog.domain.AuditRecord;
 import com.auditlog.domain.AuditRecordStore;
 import com.auditlog.domain.CanonicalJson;
+import com.auditlog.domain.ExportFilter;
 import com.auditlog.domain.PageResult;
+import com.auditlog.domain.RecordStatus;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
@@ -65,6 +68,11 @@ public class JpaAuditRecordStore implements AuditRecordStore {
     }
 
     @Override
+    public Optional<AuditRecord> findById(long id) {
+        return repository.findById(id).map(this::toDomain);
+    }
+
+    @Override
     public PageResult<AuditRecord> search(AuditQueryFilter filter, int page, int size) {
         Page<AuditRecordEntity> result = repository.search(
                 filter.actorId(),
@@ -75,6 +83,7 @@ public class JpaAuditRecordStore implements AuditRecordStore {
                 filter.occurredTo(),
                 filter.recordedFrom(),
                 filter.recordedTo(),
+                filter.statuses(),
                 PageRequest.of(page, size, CHAIN_ORDER));
         return PageResult.of(
                 result.getContent().stream().map(this::toDomain).toList(),
@@ -93,6 +102,33 @@ public class JpaAuditRecordStore implements AuditRecordStore {
                 .toList();
     }
 
+    @Override
+    public int archiveRecordedBefore(Instant cutoff, Instant archivedAt) {
+        return repository.archiveRecordedBefore(
+                cutoff, archivedAt, RecordStatus.ACTIVE, RecordStatus.ARCHIVED);
+    }
+
+    @Override
+    public void markHasRedactions(long recordId) {
+        repository.markHasRedactions(recordId);
+    }
+
+    @Override
+    public List<AuditRecord> findForExport(ExportFilter filter, int limit) {
+        return repository.findForExport(
+                        blankToNull(filter.actorId()),
+                        blankToNull(filter.resourceType()),
+                        blankToNull(filter.resourceId()),
+                        PageRequest.ofSize(limit))
+                .stream()
+                .map(this::toDomain)
+                .toList();
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
+    }
+
     private AuditRecord toDomain(AuditRecordEntity entity) {
         return new AuditRecord(
                 entity.getId(),
@@ -105,6 +141,9 @@ public class JpaAuditRecordStore implements AuditRecordStore {
                 entity.getOccurredAt(),
                 entity.getRecordedAt(),
                 entity.getContentHash(),
-                entity.getPreviousHash());
+                entity.getPreviousHash(),
+                entity.getStatus(),
+                entity.getArchivedAt(),
+                entity.isHasRedactions());
     }
 }
