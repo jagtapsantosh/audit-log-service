@@ -180,7 +180,7 @@ Rejected: unauthenticated APIs; optional API key “later”; API keys on admin/
 
 **API keys** — service-to-service ingest and optional batch read. Header `X-API-Key`. Store SHA-256(key + pepper) in `audit.security.api-keys` (config). Each key: `clientId` + scopes.
 
-**JWT** — ops and compliance. Header `Authorization: Bearer`. Prototype `POST /auth/token` issues ~15 min HMAC JWTs. Production: corporate IdP + JWKS; drop the local token endpoint.
+**JWT** — ops and compliance. Header `Authorization: Bearer`. Prototype `POST /auth/token` issues ~15 min HMAC JWTs. Production profile (`prod`) disables that mint, refuses documented `dev-only-*` secrets, and accepts `AUDIT_JWK_SET_URI` for a corporate IdP.
 
 | Scope | Meaning |
 |-------|---------|
@@ -202,7 +202,7 @@ Rejected: unauthenticated APIs; optional API key “later”; API keys on admin/
 | `/actuator/health` | — | — | Public |
 | OpenAPI | — | — | Local only; deny in `prod` |
 
-TLS at the reverse proxy in production. Rate limit per IP on `/auth/token` (~10/min). Never log `Authorization` or `X-API-Key`. Filters and `POST /auth/token` are implemented.
+TLS at the reverse proxy in production. CORS: no allowed origins (this is not a browser API). Rate limit per IP on `/auth/token` (~10/min) and `POST /audit/events` (~120/min). Request bodies over `audit.security.max-request-bytes` (128 KiB) are **413**. Optional `Idempotency-Key` on write replays the original record. Never log `Authorization` or `X-API-Key`.
 
 ---
 

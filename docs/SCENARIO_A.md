@@ -140,4 +140,4 @@ All of the following are implemented and passing (66 tests, no skips with Docker
 
 ## Out of scope for A
 
-Retention, redaction, export, compliance reports (B and C). Corporate IdP/JWKS (local `POST /auth/token` only). Physical row delete.
+Retention, redaction, export, compliance reports (B and C). Corporate IdP/JWKS (local `POST /auth/token` only; prod profile can point at JWKS). Physical row delete is detected as `TAIL_TRUNCATION` against `audit_chain_head`, not prevented.

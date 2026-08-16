@@ -161,6 +161,14 @@ Format:
 
 ---
 
+## [2026-08-16] Task: Close evaluation scorecard gaps
+
+- Prompt: Understand the attached detailed evaluation scorecard and fix the gaps it listed for this audit-log-service.
+- Accepted: Complete `ATTESTATION.md` (date, repo, commit, claim-to-evidence). Fail-closed `prod` secrets (`ProductionSecrets`). JaCoCo line/branch gate + GitHub Actions `./gradlew check`. Optional `Idempotency-Key` on write. Request size + write rate limits. Explicit deny-all CORS. `audit_chain_head` + `TAIL_TRUNCATION`. HMAC `bundleSignature` on exports. `RedactionRaceIT`, append-failure does not publish head. Traceability matrix. Flyway V3 for head + idempotency tables.
+- Modified: Export wire format gained `bundleSignature` (hash pre-image still excludes hash and signature). Verify now fails when the published head is ahead of the table. Local token mint is disableable; JWKS URI is config-ready, not a live Okta integration.
+- Rejected: Editing the frozen `IMPLEMENTATION_PLAN.md`. Faking a corporate IdP. A DB trigger that would break the assignment's same-role SQL tamper. Asymmetric export signatures. Multi-tenant resource ownership. Killing Postgres mid-transaction as a flaky IT.
+- Rationale: The scorecard's Weak Borderline verdict was gated on attestation and production-security evidence, not a broken chain. The P0/P1 items that could be proven in this prototype are now executable tests; IdP/mTLS/WORM remain documented production follow-ups rather than a pretend integration.
+
 ## Later entries
 
 Append here if a later change revises a frozen decision. For each: what was prompted, what was kept, what was edited, what was thrown away, and why.

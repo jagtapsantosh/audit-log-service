@@ -84,7 +84,9 @@ class ExportIT extends AuditApiIntegrationTest {
         assertThat(sequences(bundle)).containsExactly(1L, 3L, 5L);
         // The served document is the published contract, so nothing extra may appear in it.
         assertThat(fieldNames(bundle)).containsExactlyInAnyOrder(
-                "exportVersion", "exportedAt", "filter", "genesisHash", "records", "bundleHash");
+                "exportVersion", "exportedAt", "filter", "genesisHash", "records", "bundleHash",
+                "bundleSignature");
+        assertThat(bundle.get("bundleSignature").asText()).hasSize(64);
         assertThat(fieldNames(bundle.get("records").get(0))).containsExactlyInAnyOrder(
                 "sequence", "eventType", "actorId", "resourceType", "resourceId", "occurredAt",
                 "recordedAt", "contentHash", "previousHash", "payload", "redactedFields");

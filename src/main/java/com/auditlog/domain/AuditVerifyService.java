@@ -5,6 +5,7 @@ import com.auditlog.domain.ChainVerificationResult.ViolationType;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -78,8 +79,58 @@ public class AuditVerifyService {
             }
         }
 
+        ChainViolation truncation = inspectPublishedHead(expectedSequence - 1, expectedPreviousHash, totalRecords);
+        if (truncation != null) {
+            lastKnownIntact.set(0);
+            log.warn("Chain verification failed at sequence={} type={}",
+                    truncation.sequence(), truncation.violationType());
+            return ChainVerificationResult.broken(totalRecords, truncation);
+        }
+
         lastKnownIntact.set(1);
         return ChainVerificationResult.intact(totalRecords);
+    }
+
+    /**
+     * After an honest walk, the table's current head must still match the pointer this service
+     * published. A DBA who deletes only the newest {@code audit_records} rows leaves a prefix that
+     * still hashes; the published head is what makes that visible.
+     */
+    private ChainViolation inspectPublishedHead(long walkedHeadSequence, String walkedHeadHash, long totalRecords) {
+        Optional<ChainHead> published = store.findPublishedHead();
+        if (published.isEmpty()) {
+            return totalRecords == 0
+                    ? null
+                    : new ChainViolation(
+                            walkedHeadSequence,
+                            null,
+                            ViolationType.TAIL_TRUNCATION,
+                            null,
+                            walkedHeadHash,
+                            "records exist but no published chain head was found");
+        }
+        ChainHead head = published.get();
+        if (totalRecords == 0) {
+            return new ChainViolation(
+                    head.sequence(),
+                    null,
+                    ViolationType.TAIL_TRUNCATION,
+                    head.contentHash(),
+                    null,
+                    "published head sequence " + head.sequence()
+                            + " but the table is empty");
+        }
+        if (walkedHeadSequence < head.sequence() || !head.contentHash().equals(walkedHeadHash)) {
+            return new ChainViolation(
+                    head.sequence(),
+                    null,
+                    ViolationType.TAIL_TRUNCATION,
+                    head.contentHash(),
+                    walkedHeadHash,
+                    "published head is sequence " + head.sequence()
+                            + " but the table's newest record is sequence " + walkedHeadSequence);
+        }
+        return null;
     }
 
     private ChainViolation inspect(AuditRecord record, long expectedSequence, String expectedPreviousHash) {

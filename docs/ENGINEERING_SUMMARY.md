@@ -34,7 +34,7 @@ Sequence: freeze (export subsequence, canonical JSON, empty-chain verify, trigge
 | Runbook | `README.md` |
 | OpenAPI | SpringDoc `/swagger-ui.html` |
 | Build | `build.gradle.kts`, Gradle Wrapper |
-| Code | `com.auditlog` — Spring Boot 3.5, Flyway V1 (`occurred_at` / `recorded_at`) + V2 (retention, redaction) |
+| Code | `com.auditlog` — Spring Boot 3.5, Flyway V1 (`occurred_at` / `recorded_at`) + V2 (retention, redaction) + V3 (chain head, idempotency) |
 | Bundle verifier | `com.auditlog.domain.ExportVerifier`, `./gradlew verifyExport --args=bundle.json` |
 
 ---
@@ -51,6 +51,7 @@ Sequence: freeze (export subsequence, canonical JSON, empty-chain verify, trigge
 | Scenario B code + tests (retention, redaction, export + verifier) | Done (2026-08-14); 182 tests green, no Scenario A regressions |
 | Scenario C code + tests | Done (2026-08-14); 208 tests green, no A/B regressions |
 | README runbook | Setup, API table, Scenario A–C validation scripts, test matrix |
+| Evaluation gap closure | Attestation, fail-closed prod secrets, JaCoCo + CI, idempotency, request limits, CORS deny, head anchor, signed export |
 | Append-only DB trigger | Not implemented, by decision (needs an app role distinct from the tamper role; see Limitations) |
 
 ---
@@ -75,7 +76,7 @@ Sequence: freeze (export subsequence, canonical JSON, empty-chain verify, trigge
 | Canonical form omits a hashed field | Freeze field list in ARCHITECTURE.md | Code review + hash unit tests |
 | Caller backdates `occurredAt` at write | Hashed `recordedAt` is ingest evidence; retention uses `recordedAt` | Dual-clock docs + retention tests |
 | Leaked ingest API key | JWT-only for verify, redact, archive, compliance | Auth matrix tests (API key → 403 on admin) |
-| SQL delete of the **newest** records | Not detectable by a chain walk alone (see Limitations); needs a head anchor kept outside the table | Probed against a live stack: deleting the tail row returns `intact: true`, deleting a middle row returns `SEQUENCE_GAP` |
+| SQL delete of the **newest** records | Published head in `audit_chain_head`, compared after the walk | `TailTruncationIT`: delete sequence 3 → `TAIL_TRUNCATION`; middle delete remains `SEQUENCE_GAP` |
 
 Validation gate for A (assignment script): write → query → verify intact → SQL update one payload → verify names that sequence and `CONTENT_HASH_MISMATCH`. **Met**, both as `ChainVerificationIT` and as the README script run against Docker Compose.
 
@@ -87,7 +88,7 @@ Scenario B's tests are written around the two claims that are easy to get wrong:
 
 A zero-day retention window (`audit.retention.days=0`) is used in `RetentionIT` instead of backdating `recorded_at`, because that column is hashed — rewriting it would register as tamper rather than as an old record.
 
-Not covered, deliberately: load/performance testing of the O(n) verify walk on large chains; fault injection (killed transactions, connection loss); mutation testing; multi-instance deployment; concurrent redaction of the same path from two callers (the unique constraint turns it into a **409**, which is asserted only by construction, not by a race test). No static-analysis or CI gate yet — `./gradlew test` is the gate, and CI would be the first addition with more time.
+Covered in the gap-closure pass: append failure does not publish a head (`AuditWriteServiceTest`); concurrent redaction of the same path (`RedactionRaceIT`); JaCoCo line/branch gate and GitHub Actions `./gradlew check`. Still not covered: load/performance of the O(n) verify walk; killing the database mid-transaction; mutation testing; multi-instance deployment.
 
 ---
 
@@ -105,14 +106,14 @@ Not covered, deliberately: load/performance testing of the O(n) verify walk on l
 ## Limitations
 
 - Append-only is enforced at the application layer: no mapped verbs, no delete anywhere in the persistence interfaces, hashed columns `updatable = false`, and the only two UPDATE statements name retention/redaction metadata columns explicitly. Preventing SQL-level rewrites needs a DB trigger scoped to a dedicated app role, which stays unimplemented by decision — the compose stack runs the app and the assignment's tamper step as the same role, and splitting them would change local credentials and Testcontainers wiring for a guarantee this prototype already frames as detection.
-- **Truncation of the newest records is not detectable.** Deleting the tail leaves a prefix that still hashes and links correctly, so verify reports `intact: true` with a smaller `totalRecords`. Every other edit is caught: payload, actor, or clock changes as `CONTENT_HASH_MISMATCH`, a rewritten link as `PREVIOUS_HASH_BREAK`, and a deleted interior record as `SEQUENCE_GAP`. Closing the gap needs an anchor the DBA does not own — publishing the head `(sequence, contentHash)` to a WORM sink, or an external monitor that pins the last head it saw and alerts when the chain shrinks. The honest claim for this prototype is therefore that the chain proves nothing was altered *up to the head it currently claims*, not that no record was ever removed from the end.
+- **Truncation of the newest records is detected against `audit_chain_head`.** Each append publishes `(sequence, contentHash)` in the same transaction. Verify walks the table, then compares the walked head to that pointer; a SQL `DELETE` of the newest rows is `TAIL_TRUNCATION`. A DBA who also rewrites the head row can still hide truncation — production should copy each published head to a WORM sink the database owner does not control.
 - Verify is an O(n) walk with no checkpoints, so verification cost grows with the log.
 - Overlay redaction does not hide plaintext from anyone with SQL access. It protects API consumers and export recipients only.
 - Redaction is field-level and additive: there is no un-redact, and no record-level erasure. Field paths are dotted and cannot address array elements.
 - Soft archive never reclaims disk, and there is no un-archive endpoint (a re-run of the sweep will not revert a record whose window later changes).
-- Export is a subsequence of the global chain, not a replay of `/audit/verify`. Recipients cannot recompute per-record `contentHash` when the payload is redacted; they check `bundleHash` (and unredacted records only). `bundleHash` is unkeyed, so anyone who knows the algorithm can re-seal an edited file — which is why unredacted records are re-hashed individually, and why a signature would be the production upgrade.
+- Export is a subsequence of the global chain, not a replay of `/audit/verify`. Recipients cannot recompute per-record `contentHash` when the payload is redacted; they check `bundleHash` (and unredacted records only) plus HMAC `bundleSignature` when they have `AUDIT_EXPORT_SIGNING_KEY`. The signature stops a re-sealed file; it is still a shared secret, not an asymmetric filing signature.
 - Bundles are capped at 10,000 records and built in memory rather than streamed.
 - Compliance report is a live query with a pinned head hash, not a signed, stored filing. `chainHeadHash` is the global chain head, which may not itself be an access event.
-- Prototype JWT mint is not corporate SSO. No multi-tenant isolation, no PDF.
+- Prototype JWT mint is not corporate SSO. No multi-tenant isolation, no PDF. Production profile disables `/auth/token` and accepts `AUDIT_JWK_SET_URI` for a corporate IdP.
 
-These are deliberate timebox cuts, not accidental omissions. Production follow-ups: column encryption or field-level crypto, partition/tier old rows, signed reports, JWKS/IdP, mTLS.
+These are deliberate timebox cuts, not accidental omissions. Production follow-ups: column encryption or field-level crypto, partition/tier old rows, asymmetric export signatures, live IdP/mTLS at the edge.

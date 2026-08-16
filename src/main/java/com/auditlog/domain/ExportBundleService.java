@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.time.Clock;
+import org.springframework.beans.factory.annotation.Value;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -27,6 +28,7 @@ public class ExportBundleService {
     public static final int MAX_RECORDS = 10_000;
 
     private static final String BUNDLE_HASH_FIELD = "bundleHash";
+    private static final String BUNDLE_SIGNATURE_FIELD = "bundleSignature";
 
     private static final Logger log = LoggerFactory.getLogger(ExportBundleService.class);
 
@@ -36,6 +38,7 @@ public class ExportBundleService {
     private final CanonicalJson canonicalJson;
     private final ObjectMapper objectMapper;
     private final Clock clock;
+    private final String exportSigningKey;
 
     public ExportBundleService(
             AuditRecordStore recordStore,
@@ -43,7 +46,8 @@ public class ExportBundleService {
             RedactionOverlay overlay,
             CanonicalJson canonicalJson,
             ObjectMapper objectMapper,
-            Clock clock
+            Clock clock,
+            @Value("${audit.security.export-signing-key}") String exportSigningKey
     ) {
         this.recordStore = recordStore;
         this.redactionStore = redactionStore;
@@ -51,6 +55,7 @@ public class ExportBundleService {
         this.canonicalJson = canonicalJson;
         this.objectMapper = objectMapper;
         this.clock = clock;
+        this.exportSigningKey = exportSigningKey;
     }
 
     @Transactional(readOnly = true)
@@ -81,9 +86,11 @@ public class ExportBundleService {
                 filter,
                 HashChainService.GENESIS_HASH,
                 exported,
+                null,
                 null);
 
-        ExportBundle bundle = unsealed.sealedWith(bundleHash(unsealed));
+        String hash = bundleHash(unsealed);
+        ExportBundle bundle = unsealed.sealedWith(hash, HmacSha256.hex(exportSigningKey, hash));
         log.info("Exported {} record(s) for filter {} bundleHash={}",
                 exported.size(), filter, bundle.bundleHash());
         return bundle;
@@ -101,6 +108,7 @@ public class ExportBundleService {
     static String hashOf(JsonNode bundleJson, CanonicalJson canonicalJson) {
         ObjectNode copy = (ObjectNode) bundleJson.deepCopy();
         copy.remove(BUNDLE_HASH_FIELD);
+        copy.remove(BUNDLE_SIGNATURE_FIELD);
         return Sha256.hex(canonicalJson.serializeToBytes(copy));
     }
 

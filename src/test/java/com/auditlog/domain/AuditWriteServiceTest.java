@@ -32,6 +32,9 @@ class AuditWriteServiceTest {
     @Mock
     private AuditRecordStore store;
 
+    @Mock
+    private IdempotencyStore idempotencyStore;
+
     private final CanonicalJson canonicalJson = new CanonicalJson();
     private final HashChainService hashChainService = new HashChainService(canonicalJson);
 
@@ -41,6 +44,7 @@ class AuditWriteServiceTest {
     void setUp() {
         writeService = new AuditWriteService(
                 store,
+                idempotencyStore,
                 hashChainService,
                 canonicalJson,
                 Clock.fixed(NOW, ZoneOffset.UTC),
@@ -74,6 +78,7 @@ class AuditWriteServiceTest {
         order.verify(store).lockChain();
         order.verify(store).findChainHead();
         order.verify(store).append(any());
+        order.verify(store).publishHead(any(), any());
     }
 
     @Test
@@ -152,6 +157,50 @@ class AuditWriteServiceTest {
     }
 
     @Test
+    @DisplayName("a failed append does not publish a new chain head")
+    void doesNotPublishHeadWhenAppendFails() {
+        when(store.findChainHead()).thenReturn(Optional.empty());
+        when(store.append(any())).thenThrow(new RuntimeException("connection lost"));
+
+        assertThatThrownBy(() -> writeService.append(event(NOW, null)))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("connection lost");
+
+        verify(store, never()).publishHead(any(), any());
+        verify(idempotencyStore, never()).save(any());
+    }
+
+    @Test
+    void replaysAMatchingIdempotencyKeyWithoutAppending() {
+        AuditRecord existing = new AuditRecord(
+                3L, 3, "USER_LOGIN", "user-123", "SESSION", "sess-abc",
+                canonicalJson.emptyObject(), NOW, NOW, "a".repeat(64), HashChainService.GENESIS_HASH);
+        IdempotencyKey key = IdempotencyKey.parse("ingest-service", "retry-1");
+        when(idempotencyStore.find("ingest-service", "retry-1")).thenReturn(Optional.of(
+                new IdempotencyRecord("ingest-service", "retry-1", requestHash(event(NOW, null)), 3L, NOW)));
+        when(store.findById(3L)).thenReturn(Optional.of(existing));
+
+        AppendResult result = writeService.append(event(NOW, null), key);
+
+        assertThat(result.replay()).isTrue();
+        assertThat(result.record().id()).isEqualTo(3L);
+        verify(store, never()).append(any());
+        verify(store, never()).publishHead(any(), any());
+    }
+
+    @Test
+    void rejectsIdempotencyKeyReuseWithADifferentBody() {
+        IdempotencyKey key = IdempotencyKey.parse("ingest-service", "retry-1");
+        when(idempotencyStore.find("ingest-service", "retry-1")).thenReturn(Optional.of(
+                new IdempotencyRecord("ingest-service", "retry-1", "f".repeat(64), 3L, NOW)));
+
+        assertThatThrownBy(() -> writeService.append(event(NOW, "{\"ip\":\"10.0.0.1\"}"), key))
+                .isInstanceOf(IdempotencyConflictException.class);
+
+        verify(store, never()).append(any());
+    }
+
+    @Test
     void rejectsOversizedPayload() {
         String oversized = "{\"blob\":\"" + "x".repeat(AuditWriteService.MAX_PAYLOAD_BYTES) + "\"}";
 
@@ -161,6 +210,17 @@ class AuditWriteServiceTest {
                 .isEqualTo("PAYLOAD_TOO_LARGE");
 
         verify(store, never()).append(any());
+    }
+
+    private String requestHash(NewAuditEvent event) {
+        var node = canonicalJson.newObject();
+        node.put("actorId", event.actorId());
+        node.put("eventType", event.eventType());
+        node.put("occurredAt", CanonicalJson.canonicalInstant(event.occurredAt()).toString());
+        node.set("payload", event.payload() == null ? canonicalJson.emptyObject() : event.payload());
+        node.put("resourceId", event.resourceId());
+        node.put("resourceType", event.resourceType());
+        return Sha256.hex(canonicalJson.serializeToBytes(node));
     }
 
     private NewAuditEvent event(Instant occurredAt, String payloadJson) {

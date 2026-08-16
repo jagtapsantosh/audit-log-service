@@ -34,6 +34,15 @@ public final class ExportVerifier {
     private final CanonicalJson canonicalJson = new CanonicalJson();
     private final HashChainService hashChainService = new HashChainService(canonicalJson);
     private final ObjectMapper mapper = JsonMapper.builder().build();
+    private final String signingKey;
+
+    public ExportVerifier() {
+        this(null);
+    }
+
+    public ExportVerifier(String signingKey) {
+        this.signingKey = signingKey == null || signingKey.isBlank() ? null : signingKey;
+    }
 
     public Report verify(Path bundleFile) throws IOException {
         return verify(mapper.readTree(Files.readString(bundleFile)));
@@ -50,6 +59,7 @@ public final class ExportVerifier {
         }
 
         boolean bundleHashValid = checkBundleHash(bundle, findings);
+        checkBundleSignature(bundle, findings);
 
         JsonNode records = bundle.get("records");
         if (records == null || !records.isArray()) {
@@ -84,6 +94,25 @@ public final class ExportVerifier {
             return false;
         }
         return true;
+    }
+
+    private void checkBundleSignature(JsonNode bundle, List<String> findings) {
+        JsonNode declared = bundle.get("bundleSignature");
+        if (signingKey == null) {
+            return;
+        }
+        if (declared == null || !declared.isTextual() || declared.asText().isBlank()) {
+            findings.add("bundleSignature is missing");
+            return;
+        }
+        JsonNode hash = bundle.get("bundleHash");
+        if (hash == null || !hash.isTextual()) {
+            return;
+        }
+        String expected = HmacSha256.hex(signingKey, hash.asText());
+        if (!expected.equals(declared.asText())) {
+            findings.add("bundleSignature mismatch");
+        }
     }
 
     private void checkContentHash(JsonNode record, List<String> findings) {
@@ -153,11 +182,12 @@ public final class ExportVerifier {
 
     /** {@code java -cp app.jar com.auditlog.domain.ExportVerifier bundle.json} */
     public static void main(String[] args) throws IOException {
-        if (args.length != 1) {
-            System.err.println("usage: ExportVerifier <bundle.json>");
+        if (args.length < 1 || args.length > 2) {
+            System.err.println("usage: ExportVerifier <bundle.json> [signing-key]");
             System.exit(2);
         }
-        Report report = new ExportVerifier().verify(Path.of(args[0]));
+        String key = args.length == 2 ? args[1] : System.getenv("AUDIT_EXPORT_SIGNING_KEY");
+        Report report = new ExportVerifier(key).verify(Path.of(args[0]));
         System.out.println(report);
         System.exit(report.intact() ? 0 : 1);
     }

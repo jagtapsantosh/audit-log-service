@@ -2,6 +2,7 @@ package com.auditlog.api.error;
 
 import com.auditlog.domain.AuditQueryService.InvalidAuditQueryException;
 import com.auditlog.domain.AuditRecordNotFoundException;
+import com.auditlog.domain.IdempotencyConflictException;
 import com.auditlog.domain.InvalidAuditEventException;
 import com.auditlog.domain.InvalidComplianceRequestException;
 import com.auditlog.domain.InvalidExportRequestException;
@@ -71,6 +72,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AuditRecordNotFoundException.class)
     public ResponseEntity<ErrorResponse> onRecordNotFound(AuditRecordNotFoundException ex) {
         return status(HttpStatus.NOT_FOUND, ex.getMessage(), "RECORD_NOT_FOUND");
+    }
+
+    @ExceptionHandler(IdempotencyConflictException.class)
+    public ResponseEntity<ErrorResponse> onIdempotencyConflict(IdempotencyConflictException ex) {
+        return status(HttpStatus.CONFLICT, ex.getMessage(), "IDEMPOTENCY_KEY_REUSED");
     }
 
     /**

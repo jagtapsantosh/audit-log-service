@@ -52,7 +52,8 @@ class ExportBundleServiceTest {
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
                 .build();
         exportBundleService = new ExportBundleService(recordStore, redactionStore, overlay,
-                canonicalJson, objectMapper, Clock.fixed(NOW, ZoneOffset.UTC));
+                canonicalJson, objectMapper, Clock.fixed(NOW, ZoneOffset.UTC),
+                "test-export-signing-key-not-for-production!!");
     }
 
     @Test
@@ -147,7 +148,7 @@ class ExportBundleServiceTest {
                 canonicalJson.parse("{\"ip\":\"10.0.0.9\"}"),
                 List.of());
         ExportBundle tampered = new ExportBundle(bundle.exportVersion(), bundle.exportedAt(),
-                bundle.filter(), bundle.genesisHash(), List.of(edited), null);
+                bundle.filter(), bundle.genesisHash(), List.of(edited), null, null);
 
         assertThat(exportBundleService.bundleHash(tampered)).isNotEqualTo(bundle.bundleHash());
     }
@@ -159,7 +160,7 @@ class ExportBundleServiceTest {
         ExportBundle bundle = exportBundleService.export(ExportFilter.forActor("user-123"));
 
         ExportBundle relabelled = new ExportBundle(bundle.exportVersion(), bundle.exportedAt(),
-                ExportFilter.forActor("user-999"), bundle.genesisHash(), bundle.records(), null);
+                ExportFilter.forActor("user-999"), bundle.genesisHash(), bundle.records(), null, null);
 
         assertThat(exportBundleService.bundleHash(relabelled)).isNotEqualTo(bundle.bundleHash());
     }
@@ -186,7 +187,9 @@ class ExportBundleServiceTest {
         // Derived accessors such as isRedacted()/isEmpty() must not leak into the format: the file is
         // a published contract and every byte of it is covered by bundleHash.
         assertThat(fieldNames(json)).containsExactlyInAnyOrder(
-                "exportVersion", "exportedAt", "filter", "genesisHash", "records", "bundleHash");
+                "exportVersion", "exportedAt", "filter", "genesisHash", "records", "bundleHash",
+                "bundleSignature");
+        assertThat(json.get("bundleSignature").asText()).hasSize(64);
         assertThat(fieldNames(json.get("filter"))).containsExactly("actorId");
         assertThat(fieldNames(json.get("records").get(0))).containsExactlyInAnyOrder(
                 "sequence", "eventType", "actorId", "resourceType", "resourceId", "occurredAt",

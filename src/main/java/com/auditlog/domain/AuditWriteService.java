@@ -32,6 +32,7 @@ public class AuditWriteService {
     private static final Logger log = LoggerFactory.getLogger(AuditWriteService.class);
 
     private final AuditRecordStore store;
+    private final IdempotencyStore idempotencyStore;
     private final HashChainService hashChainService;
     private final CanonicalJson canonicalJson;
     private final Clock clock;
@@ -39,12 +40,14 @@ public class AuditWriteService {
 
     public AuditWriteService(
             AuditRecordStore store,
+            IdempotencyStore idempotencyStore,
             HashChainService hashChainService,
             CanonicalJson canonicalJson,
             Clock clock,
             MeterRegistry meterRegistry
     ) {
         this.store = store;
+        this.idempotencyStore = idempotencyStore;
         this.hashChainService = hashChainService;
         this.canonicalJson = canonicalJson;
         this.clock = clock;
@@ -55,6 +58,11 @@ public class AuditWriteService {
 
     @Transactional
     public AuditRecord append(NewAuditEvent event) {
+        return append(event, null).record();
+    }
+
+    @Transactional
+    public AppendResult append(NewAuditEvent event, IdempotencyKey idempotencyKey) {
         Instant recordedAt = CanonicalJson.canonicalInstant(clock.instant());
         Instant occurredAt = CanonicalJson.canonicalInstant(event.occurredAt());
         if (occurredAt.isAfter(recordedAt.plus(MAX_FUTURE_SKEW))) {
@@ -65,10 +73,18 @@ public class AuditWriteService {
         }
 
         JsonNode payload = normalizePayload(event.payload());
+        String requestHash = idempotencyKey == null ? null : requestHash(event, payload);
 
         // The lock is taken before reading the head so concurrent appends cannot observe the same
-        // predecessor and produce two records with the same previousHash.
+        // predecessor and produce two records with the same previousHash. Replay lookup sits inside
+        // the same lock so two retries cannot both miss and append twice.
         store.lockChain();
+        if (idempotencyKey != null) {
+            Optional<AppendResult> replay = replayIfPresent(idempotencyKey, requestHash);
+            if (replay.isPresent()) {
+                return replay.get();
+            }
+        }
         Optional<AuditRecord> head = store.findChainHead();
         long sequence = head.map(AuditRecord::sequence).orElse(0L) + 1;
         String previousHash = head.map(AuditRecord::contentHash).orElse(HashChainService.GENESIS_HASH);
@@ -97,6 +113,15 @@ public class AuditWriteService {
                 hashChainService.contentHash(chainInput),
                 previousHash));
 
+        store.publishHead(new ChainHead(persisted.sequence(), persisted.contentHash()), recordedAt);
+        if (idempotencyKey != null && persisted.id() != null) {
+            idempotencyStore.save(new IdempotencyRecord(
+                    idempotencyKey.clientId(),
+                    idempotencyKey.key(),
+                    requestHash,
+                    persisted.id(),
+                    recordedAt));
+        }
         eventsWritten.increment();
         log.info(
                 "Appended audit record sequence={} eventType={} resource={}/{}",
@@ -104,7 +129,31 @@ public class AuditWriteService {
                 persisted.eventType(),
                 persisted.resourceType(),
                 persisted.resourceId());
-        return persisted;
+        return AppendResult.created(persisted);
+    }
+
+    private Optional<AppendResult> replayIfPresent(IdempotencyKey idempotencyKey, String requestHash) {
+        Optional<IdempotencyRecord> existing = idempotencyStore.find(idempotencyKey.clientId(), idempotencyKey.key());
+        if (existing.isEmpty()) {
+            return Optional.empty();
+        }
+        if (!existing.get().requestHash().equals(requestHash)) {
+            throw new IdempotencyConflictException();
+        }
+        AuditRecord original = store.findById(existing.get().auditRecordId())
+                .orElseThrow(() -> new IllegalStateException("Idempotency key points at a missing record"));
+        return Optional.of(AppendResult.replayed(original));
+    }
+
+    private String requestHash(NewAuditEvent event, JsonNode payload) {
+        var node = canonicalJson.newObject();
+        node.put("actorId", event.actorId());
+        node.put("eventType", event.eventType());
+        node.put("occurredAt", CanonicalJson.canonicalInstant(event.occurredAt()).toString());
+        node.set("payload", payload);
+        node.put("resourceId", event.resourceId());
+        node.put("resourceType", event.resourceType());
+        return Sha256.hex(canonicalJson.serializeToBytes(node));
     }
 
     private JsonNode normalizePayload(JsonNode payload) {

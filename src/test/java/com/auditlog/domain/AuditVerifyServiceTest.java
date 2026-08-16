@@ -3,6 +3,7 @@ package com.auditlog.domain;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 import com.auditlog.domain.ChainVerificationResult.ViolationType;
@@ -10,6 +11,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -104,6 +106,22 @@ class AuditVerifyServiceTest {
     }
 
     @Test
+    @DisplayName("published head ahead of the table: newest records were deleted")
+    void detectsTailTruncation() {
+        List<AuditRecord> remaining = chainOf(2);
+        AuditRecord missingHead = chainOf(3).get(2);
+        givenChain(remaining);
+        when(store.findPublishedHead()).thenReturn(
+                Optional.of(new ChainHead(missingHead.sequence(), missingHead.contentHash())));
+
+        ChainVerificationResult result = verifyService.verify();
+
+        assertThat(result.intact()).isFalse();
+        assertThat(result.firstViolation().violationType()).isEqualTo(ViolationType.TAIL_TRUNCATION);
+        assertThat(result.firstViolation().sequence()).isEqualTo(3);
+    }
+
+    @Test
     void reportsOnlyTheFirstViolation() {
         List<AuditRecord> chain = chainOf(4);
         chain.set(1, withPayload(chain.get(1), "{\"tampered\":1}"));
@@ -121,6 +139,13 @@ class AuditVerifyServiceTest {
             int limit = invocation.getArgument(1);
             return chain.stream().filter(record -> record.sequence() > cursor).limit(limit).toList();
         });
+        if (chain.isEmpty()) {
+            lenient().when(store.findPublishedHead()).thenReturn(Optional.empty());
+        } else {
+            AuditRecord last = chain.getLast();
+            lenient().when(store.findPublishedHead()).thenReturn(
+                    Optional.of(new ChainHead(last.sequence(), last.contentHash())));
+        }
     }
 
     /** Builds an honestly linked chain: each record hashes its own content plus its predecessor. */

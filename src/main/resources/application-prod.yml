@@ -1,5 +1,19 @@
+# Fail closed: no documented development fallbacks, no local token mint, no OpenAPI.
+# Required env: AUDIT_SECURITY_PEPPER, AUDIT_JWT_SECRET, AUDIT_EXPORT_SIGNING_KEY.
+# Optional IdP: AUDIT_JWK_SET_URI (JWKS). TLS terminates at the reverse proxy; this process
+# does not open a browser CORS policy.
+
 springdoc:
   swagger-ui:
     enabled: false
   api-docs:
     enabled: false
+
+audit:
+  security:
+    pepper: ${AUDIT_SECURITY_PEPPER}
+    jwt:
+      secret: ${AUDIT_JWT_SECRET}
+      jwk-set-uri: ${AUDIT_JWK_SET_URI:}
+    export-signing-key: ${AUDIT_EXPORT_SIGNING_KEY}
+    local-token-endpoint: false

@@ -24,6 +24,14 @@ public interface AuditRecordStore {
 
     AuditRecord append(AuditRecord record);
 
+    /**
+     * Publishes the newest {@code (sequence, contentHash)} this service just wrote. Verify compares
+     * this pointer to the current table so a SQL delete of the tail is visible.
+     */
+    void publishHead(ChainHead head, Instant updatedAt);
+
+    Optional<ChainHead> findPublishedHead();
+
     long count();
 
     Optional<AuditRecord> findById(long id);

@@ -21,6 +21,9 @@ import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.header.writers.XXssProtectionHeaderWriter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 @Configuration
 @EnableWebSecurity
@@ -44,11 +47,16 @@ public class SecurityConfig {
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         ApiKeyAuthenticationFilter apiKeyFilter = new ApiKeyAuthenticationFilter(properties, authHandlers);
-        TokenEndpointRateLimitFilter rateLimitFilter =
-                new TokenEndpointRateLimitFilter(properties.rateLimit().tokenPerMinute(), authHandlers);
+        TokenEndpointRateLimitFilter rateLimitFilter = new TokenEndpointRateLimitFilter(
+                properties.rateLimit().tokenPerMinute(),
+                properties.rateLimit().writePerMinute(),
+                authHandlers);
+        RequestSizeLimitFilter sizeLimitFilter =
+                new RequestSizeLimitFilter(properties.maxRequestBytes(), authHandlers);
 
         http
                 .csrf(csrf -> csrf.disable())
+                .cors(Customizer.withDefaults())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .httpBasic(basic -> basic.disable())
                 .formLogin(form -> form.disable())
@@ -61,8 +69,10 @@ public class SecurityConfig {
                         .authenticationEntryPoint(authHandlers)
                         .accessDeniedHandler(authHandlers))
                 .authorizeHttpRequests(auth -> {
-                    auth.requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
-                            .requestMatchers(HttpMethod.POST, "/auth/token").permitAll();
+                    auth.requestMatchers("/actuator/health", "/actuator/health/**").permitAll();
+                    if (properties.localTokenEndpointEnabled()) {
+                        auth.requestMatchers(HttpMethod.POST, "/auth/token").permitAll();
+                    }
                     if (swaggerEnabled) {
                         auth.requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**").permitAll();
                     }
@@ -83,14 +93,30 @@ public class SecurityConfig {
                         .contentTypeOptions(Customizer.withDefaults())
                         .frameOptions(frame -> frame.deny())
                         .xssProtection(xss -> xss.headerValue(XXssProtectionHeaderWriter.HeaderValue.ENABLED_MODE_BLOCK)))
+                .addFilterBefore(sizeLimitFilter, BearerTokenAuthenticationFilter.class)
                 .addFilterBefore(rateLimitFilter, BearerTokenAuthenticationFilter.class)
                 .addFilterBefore(apiKeyFilter, BearerTokenAuthenticationFilter.class);
 
         return http.build();
     }
 
+    /**
+     * No browser origins. This API is called by services and operator tools, not by a web app.
+     * A missing {@code Access-Control-Allow-Origin} is the deny policy.
+     */
+    @Bean
+    CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration config = new CorsConfiguration();
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", config);
+        return source;
+    }
+
     @Bean
     JwtDecoder jwtDecoder() {
+        if (properties.jwt() != null && properties.jwt().usesJwks()) {
+            return NimbusJwtDecoder.withJwkSetUri(properties.jwt().jwkSetUri()).build();
+        }
         return NimbusJwtDecoder.withSecretKey(hmacKey()).macAlgorithm(MacAlgorithm.HS256).build();
     }
 

@@ -40,6 +40,11 @@ public record ChainVerificationResult(boolean intact, long totalRecords, ChainVi
         /** The record does not point at its predecessor's content hash: a link was rewritten. */
         PREVIOUS_HASH_BREAK,
         /** Sequence numbers are not contiguous: a record was removed or inserted out of band. */
-        SEQUENCE_GAP
+        SEQUENCE_GAP,
+        /**
+         * The published head is ahead of the table (or names a different hash): the newest records
+         * were removed or the head row was rewritten independently of the chain.
+         */
+        TAIL_TRUNCATION
     }
 }

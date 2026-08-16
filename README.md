@@ -16,25 +16,27 @@ docker compose up -d
 ./gradlew bootRun
 ```
 
-- Health: http://localhost:8080/actuator/health
-- OpenAPI UI: http://localhost:8080/swagger-ui.html (Authorize with `X-API-Key` or Bearer JWT)
+- Health: [http://localhost:8080/actuator/health](http://localhost:8080/actuator/health)
+- OpenAPI UI: [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html) (Authorize with `X-API-Key` or Bearer JWT)
 - Token: `POST http://localhost:8080/auth/token`
 
 To start over with an empty chain: `docker compose down -v && docker compose up -d`.
 
 ## API (Scenarios A–C)
 
-| Method | Path | Auth | Purpose |
-|--------|------|------|---------|
-| `POST` | `/audit/events` | `X-API-Key` or JWT, scope `audit.write` | Append one event |
-| `GET` | `/audit/events` | `X-API-Key` or JWT, scope `audit.read` | Filter + paginate |
-| `GET` | `/audit/verify` | JWT only, scope `audit.read` | Walk the chain, report integrity |
-| `GET` | `/audit/export` | `X-API-Key` or JWT, scope `audit.read` | Verifiable bundle for one actor or resource |
-| `POST` | `/audit/events/{id}/redact` | JWT only, scope `audit.admin` | Mask payload fields via overlay |
-| `POST` | `/audit/admin/archive` | JWT only, scope `audit.admin` | Run the retention sweep |
-| `GET` | `/audit/compliance/access-report` | JWT only, scope `audit.compliance` | Access to `CLIENT_ACCOUNT` data |
-| `GET` | `/audit/compliance/access-report/export` | JWT only, scope `audit.compliance` | Same report as JSON or CSV file |
-| `POST` | `/auth/token` | public, rate-limited | Prototype JWT mint |
+
+| Method | Path                                     | Auth                                    | Purpose                                     |
+| ------ | ---------------------------------------- | --------------------------------------- | ------------------------------------------- |
+| `POST` | `/audit/events`                          | `X-API-Key` or JWT, scope `audit.write` | Append one event (optional `Idempotency-Key`) |
+| `GET`  | `/audit/events`                          | `X-API-Key` or JWT, scope `audit.read`  | Filter + paginate                           |
+| `GET`  | `/audit/verify`                          | JWT only, scope `audit.read`            | Walk the chain, report integrity            |
+| `GET`  | `/audit/export`                          | `X-API-Key` or JWT, scope `audit.read`  | Verifiable bundle for one actor or resource |
+| `POST` | `/audit/events/{id}/redact`              | JWT only, scope `audit.admin`           | Mask payload fields via overlay             |
+| `POST` | `/audit/admin/archive`                   | JWT only, scope `audit.admin`           | Run the retention sweep                     |
+| `GET`  | `/audit/compliance/access-report`        | JWT only, scope `audit.compliance`      | Access to `CLIENT_ACCOUNT` data             |
+| `GET`  | `/audit/compliance/access-report/export` | JWT only, scope `audit.compliance`      | Same report as JSON or CSV file             |
+| `POST` | `/auth/token`                            | public, rate-limited                    | Prototype JWT mint                          |
+
 
 There is no update or delete endpoint for audit events; `PUT`/`DELETE` on `/audit/events` return **405**.
 Redaction and archiving are `POST`s that add metadata beside a record — neither rewrites a stored
@@ -47,13 +49,15 @@ payload, a clock, or a hash, so both leave the chain verifiable.
 
 ## Assessment credentials (local / evaluator only)
 
-These plaintext values are for running the prototype. The service stores **hashes** (pepper + secret) in `application.yml`. Do not use them in production. Override with `AUDIT_SECURITY_PEPPER` and `AUDIT_JWT_SECRET`.
+These plaintext values are for running the prototype. The service stores **hashes** (pepper + secret) in `application.yml`. Do not use them in production. The `prod` profile **refuses to start** on the documented `dev-only-*` fallbacks — set `AUDIT_SECURITY_PEPPER`, `AUDIT_JWT_SECRET`, and `AUDIT_EXPORT_SIGNING_KEY`. Optional IdP: `AUDIT_JWK_SET_URI` (disables HMAC JWT validation). CORS allows no browser origins.
 
-| Kind | id | Secret | Scopes |
-|------|-----|--------|--------|
-| API key | `ingest-service` | `als_ingest_dev_key_do_not_use_in_prod` | `audit.write`, `audit.read` |
-| OAuth client | `ops-admin` | `ops-admin-secret-dev` | `audit.read`, `audit.admin` |
-| OAuth client | `regulator` | `regulator-secret-dev` | `audit.read`, `audit.compliance` |
+
+| Kind         | id               | Secret                                  | Scopes                           |
+| ------------ | ---------------- | --------------------------------------- | -------------------------------- |
+| API key      | `ingest-service` | `als_ingest_dev_key_do_not_use_in_prod` | `audit.write`, `audit.read`      |
+| OAuth client | `ops-admin`      | `ops-admin-secret-dev`                  | `audit.read`, `audit.admin`      |
+| OAuth client | `regulator`      | `regulator-secret-dev`                  | `audit.read`, `audit.compliance` |
+
 
 Header for ingest: `X-API-Key`. Header for JWT: `Authorization: Bearer <token>`.
 
@@ -75,6 +79,9 @@ for n in 1 2 3; do
 done
 ```
 
+Optional `Idempotency-Key` (1–128 of `A–Z a–z 0–9 . _ -`): a retry with the same key and body
+returns **200** and the original record; the same key with a different body is **409**.
+
 Each response carries its chain position. Record 1 links to the genesis value; record 2 links to
 record 1's `contentHash`:
 
@@ -82,6 +89,8 @@ record 1's `contentHash`:
 {"id":1,"sequence":1,"eventType":"USER_LOGIN","actorId":"user-121","resourceType":"SESSION","resourceId":"sess-1","payload":{"ip":"10.0.0.1"},"occurredAt":"2026-08-14T11:31:00Z","recordedAt":"2026-08-14T14:14:24.257027Z","contentHash":"b694a49f...","previousHash":"0000000000000000000000000000000000000000000000000000000000000000"}
 {"id":2,"sequence":2,...,"contentHash":"44fd5033...","previousHash":"b694a49f..."}
 ```
+
+
 
 ### 2. Query
 
@@ -116,6 +125,8 @@ altered.
 docker compose exec postgres psql -U auditlog -d auditlog \
   -c "UPDATE audit_records SET payload = '{\"tampered\":true}' WHERE sequence_num = 2;"
 ```
+
+
 
 ### 5. Verify again — the edit is detected
 
@@ -250,7 +261,8 @@ curl -sS -o bundle.json "http://localhost:8080/audit/export?actorId=user-123" -H
       "redactedFields": ["accountNumber", "customer.ssn"]
     }
   ],
-  "bundleHash": "75050ee7a0e7d9573f8754db56657a1056a0ec10c14084e873420dfae2ebcf07"
+  "bundleHash": "75050ee7a0e7d9573f8754db56657a1056a0ec10c14084e873420dfae2ebcf07",
+  "bundleSignature": "hmac-sha256-of-bundleHash"
 }
 ```
 
@@ -263,6 +275,8 @@ included, because an export is evidence. Bundles are capped at 10,000 records.
 
 ```bash
 ./gradlew verifyExport --args=bundle.json
+# Optional: also check HMAC bundleSignature
+./gradlew verifyExport --args="bundle.json $AUDIT_EXPORT_SIGNING_KEY"
 ```
 
 ```
@@ -283,13 +297,16 @@ findings=[bundleHash mismatch: file declares 75050ee7... but its contents hash t
 chain: sequence numbers have gaps and most `previousHash` values point at records that are not in the
 file, so a recipient cannot replay `/audit/verify` from it. The algorithm is therefore:
 
-1. Recompute `bundleHash` over the canonical document with `bundleHash` removed → proves the file has
-   not been altered since export.
-2. Re-hash each record whose `redactedFields` is empty and compare to the server's `contentHash` →
-   catches an edit even if the attacker re-seals `bundleHash`.
-3. Skip that re-hash for redacted records: the file holds a masked payload while the hash covers the
+1. Recompute `bundleHash` over the canonical document with `bundleHash` and `bundleSignature` removed
+   → proves the file has not been altered since export.
+2. If a signing key is supplied, check HMAC-SHA256 `bundleSignature` → a re-sealed file fails.
+3. Re-hash each record whose `redactedFields` is empty and compare to the server's `contentHash` →
+   catches an edit even if the attacker re-seals `bundleHash` without the key.
+4. Skip that re-hash for redacted records: the file holds a masked payload while the hash covers the
    original. Their integrity stays with `GET /audit/verify` on the service.
-4. Never fail on sequence gaps.
+5. Never fail on sequence gaps.
+
+
 
 ## Auth behaviour
 
@@ -351,31 +368,42 @@ Production: terminate TLS at a reverse proxy and validate JWTs from the corporat
 ## Tests
 
 ```bash
-./gradlew test
+./gradlew check
 ```
 
-| Suite | Type | Covers |
-|-------|------|--------|
-| `CanonicalJsonTest`, `HashChainServiceTest` | Unit | Canonical bytes, golden hash vector, every hashed field, clock precision |
-| `AuditWriteServiceTest` | Unit (Mockito) | Genesis link, sequence assignment, lock-before-read, clock skew, payload rules |
-| `AuditVerifyServiceTest` | Unit (Mockito) | Empty chain, intact chain, all three violation types, first-violation-only |
-| `AuditQueryServiceTest` | Unit (Mockito) | Page defaults and clamping, inverted ranges, overlay applied on read |
-| `RedactionOverlayTest` | Unit | Path syntax, nested paths, unknown paths, arrays rejected, stored payload untouched |
-| `RedactionServiceTest` | Unit (Mockito) | Idempotency, all-or-nothing validation, operator identity, micros precision |
-| `RetentionServiceTest` | Unit (Mockito) | Cutoff maths on the ingest clock, zero-day window, no delete path |
-| `ExportBundleServiceTest` | Unit (Mockito) | Bundle hash stability and sensitivity, exact wire format, size cap |
-| `ExportVerifierTest` | Unit | Tampered files, re-sealed files, gaps, redacted records, malformed bundles |
-| `ChainVerificationIT` | Integration | The Scenario A validation script, including the SQL tamper |
-| `AuditEventApiIT` | Integration | Write contract, filters, paging, `timestamp` alias, 405 on update/delete |
-| `ConcurrentAppendIT` | Integration | 10 parallel writers produce a contiguous, intact chain |
-| `RetentionIT` | Integration | Sweep, `includeArchived`, mixed ACTIVE/ARCHIVED verify, redact-after-archive, auth |
-| `RetentionDefaultWindowIT` | Integration | Default 365-day window does not archive a fresh write, even with an old `occurredAt` |
-| `RedactionIT` | Integration | Masked reads, verify still intact, SQL tamper still caught, auth, error codes |
-| `ExportIT` | Integration | Sparse slices, combined actor+resource filter, recipient-side verification, archived records, auth |
-| `ComplianceReportServiceTest` | Unit (Mockito) | Frozen access scope, head hash vs last access event, summary vs page, overlay, export cap |
-| `ComplianceCsvTest` | Unit | Documented columns; payload quoting; redacted values |
-| `ComplianceReportIT` | Integration | Access vs noise, filters, redaction, archive included, CSV/JSON export, 401/403 matrix |
-| `SecurityFlowIT` | Integration | 401/403 matrix across both credential types, including regulator vs admin |
+`check` runs the suite and writes a JaCoCo report at `build/reports/jacoco/test/html/index.html`.
+CI (and `./gradlew check -PcoverageGate`, which needs Docker so the ITs run) enforces line ≥ 70% and
+branch ≥ 55%. Endpoint-to-test map: [docs/TEST_TRACEABILITY.md](docs/TEST_TRACEABILITY.md).
+
+
+| Suite                                       | Type           | Covers                                                                                             |
+| ------------------------------------------- | -------------- | -------------------------------------------------------------------------------------------------- |
+| `CanonicalJsonTest`, `HashChainServiceTest` | Unit           | Canonical bytes, golden hash vector, every hashed field, clock precision                           |
+| `AuditWriteServiceTest`                     | Unit (Mockito) | Genesis link, sequence assignment, lock-before-read, clock skew, payload rules                     |
+| `AuditVerifyServiceTest`                    | Unit (Mockito) | Empty chain, intact chain, all three violation types, first-violation-only                         |
+| `AuditQueryServiceTest`                     | Unit (Mockito) | Page defaults and clamping, inverted ranges, overlay applied on read                               |
+| `RedactionOverlayTest`                      | Unit           | Path syntax, nested paths, unknown paths, arrays rejected, stored payload untouched                |
+| `RedactionServiceTest`                      | Unit (Mockito) | Idempotency, all-or-nothing validation, operator identity, micros precision                        |
+| `RetentionServiceTest`                      | Unit (Mockito) | Cutoff maths on the ingest clock, zero-day window, no delete path                                  |
+| `ExportBundleServiceTest`                   | Unit (Mockito) | Bundle hash stability and sensitivity, exact wire format, size cap                                 |
+| `ExportVerifierTest`                        | Unit           | Tampered files, re-sealed files, gaps, redacted records, malformed bundles                         |
+| `ChainVerificationIT`                       | Integration    | The Scenario A validation script, including the SQL tamper                                         |
+| `AuditEventApiIT`                           | Integration    | Write contract, filters, paging, `timestamp` alias, 405 on update/delete                           |
+| `ConcurrentAppendIT`                        | Integration    | 10 parallel writers produce a contiguous, intact chain                                             |
+| `RetentionIT`                               | Integration    | Sweep, `includeArchived`, mixed ACTIVE/ARCHIVED verify, redact-after-archive, auth                 |
+| `RetentionDefaultWindowIT`                  | Integration    | Default 365-day window does not archive a fresh write, even with an old `occurredAt`               |
+| `RedactionIT`                               | Integration    | Masked reads, verify still intact, SQL tamper still caught, auth, error codes                      |
+| `ExportIT`                                  | Integration    | Sparse slices, combined actor+resource filter, recipient-side verification, archived records, auth |
+| `ComplianceReportServiceTest`               | Unit (Mockito) | Frozen access scope, head hash vs last access event, summary vs page, overlay, export cap          |
+| `ComplianceCsvTest`                         | Unit           | Documented columns; payload quoting; redacted values                                               |
+| `ComplianceReportIT`                        | Integration    | Access vs noise, filters, redaction, archive included, CSV/JSON export, 401/403 matrix             |
+| `SecurityFlowIT`                            | Integration    | 401/403 matrix across both credential types, including regulator vs admin                          |
+| `IdempotencyIT`                             | Integration    | Replay 200, conflicting body 409, missing key still appends                                        |
+| `TailTruncationIT`                          | Integration    | SQL delete of the newest row → `TAIL_TRUNCATION`                                                   |
+| `RedactionRaceIT`                           | Integration    | Concurrent same-path redact leaves one overlay row                                                 |
+| `RequestLimitIT`                            | Integration    | Oversized body 413; write rate 429                                                                 |
+| `ProductionSecretsTest`                     | Unit           | `prod` refuses documented `dev-only-*` fallbacks                                                   |
+
 
 Integration tests start PostgreSQL 16 via Testcontainers and are skipped (not failed) when Docker is
 not running; unit tests always run. Known gaps and trade-offs are listed in
@@ -386,3 +414,4 @@ not running; unit tests always run. Known gaps and trade-offs are listed in
 ```bash
 ./gradlew build
 ```
+

@@ -171,6 +171,30 @@ class ExportVerifierTest {
     }
 
     @Test
+    void aSigningKeyRejectsAResealedTamperedBundle() {
+        ObjectNode bundle = (ObjectNode) bundleJson(unredactedRecord(1L));
+        String originalHash = bundle.get("bundleHash").asText();
+        bundle.put("bundleSignature", HmacSha256.hex("recipient-key", originalHash));
+        ((ObjectNode) bundle.get("records").get(0).get("payload")).put("ip", "10.9.9.9");
+        bundle.put("bundleHash", ExportBundleService.hashOf(bundle, canonicalJson));
+
+        ExportVerifier.Report withoutKey = new ExportVerifier().verify(bundle);
+        assertThat(withoutKey.bundleHashValid()).isTrue();
+
+        ExportVerifier.Report withKey = new ExportVerifier("recipient-key").verify(bundle);
+        assertThat(withKey.intact()).isFalse();
+        assertThat(withKey.findings()).anyMatch(finding -> finding.contains("bundleSignature"));
+    }
+
+    @Test
+    void aSigningKeyAcceptsAMatchingSignature() {
+        ObjectNode bundle = (ObjectNode) bundleJson(unredactedRecord(1L));
+        bundle.put("bundleSignature", HmacSha256.hex("recipient-key", bundle.get("bundleHash").asText()));
+
+        assertThat(new ExportVerifier("recipient-key").verify(bundle).intact()).isTrue();
+    }
+
+    @Test
     void verifiesFromRawJsonText() throws IOException {
         String json = mapper.writeValueAsString(bundleJson(unredactedRecord(1L)));
 
@@ -180,7 +204,8 @@ class ExportVerifierTest {
     /** Builds a bundle exactly as the service would, then seals it. */
     private JsonNode bundleJson(ExportRecord... records) {
         ExportBundle unsealed = new ExportBundle(ExportBundle.CURRENT_VERSION, EXPORTED_AT,
-                ExportFilter.forActor("user-123"), HashChainService.GENESIS_HASH, List.of(records), null);
+                ExportFilter.forActor("user-123"), HashChainService.GENESIS_HASH, List.of(records),
+                null, null);
         ObjectNode node = mapper.valueToTree(unsealed);
         node.put("bundleHash", ExportBundleService.hashOf(node, canonicalJson));
         return node;

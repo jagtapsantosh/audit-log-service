@@ -5,6 +5,7 @@ import com.auditlog.domain.AccessSummary;
 import com.auditlog.domain.AuditQueryFilter;
 import com.auditlog.domain.AuditRecord;
 import com.auditlog.domain.AuditRecordStore;
+import com.auditlog.domain.ChainHead;
 import com.auditlog.domain.CanonicalJson;
 import com.auditlog.domain.ComplianceAccessFilter;
 import com.auditlog.domain.ExportFilter;
@@ -32,10 +33,16 @@ public class JpaAuditRecordStore implements AuditRecordStore {
     private static final Sort CHAIN_ORDER = Sort.by(Sort.Direction.ASC, "sequenceNum");
 
     private final AuditRecordRepository repository;
+    private final ChainHeadRepository chainHeadRepository;
     private final CanonicalJson canonicalJson;
 
-    public JpaAuditRecordStore(AuditRecordRepository repository, CanonicalJson canonicalJson) {
+    public JpaAuditRecordStore(
+            AuditRecordRepository repository,
+            ChainHeadRepository chainHeadRepository,
+            CanonicalJson canonicalJson
+    ) {
         this.repository = repository;
+        this.chainHeadRepository = chainHeadRepository;
         this.canonicalJson = canonicalJson;
     }
 
@@ -63,6 +70,20 @@ public class JpaAuditRecordStore implements AuditRecordStore {
                 record.contentHash(),
                 record.previousHash());
         return toDomain(repository.save(entity));
+    }
+
+    @Override
+    public void publishHead(ChainHead head, Instant updatedAt) {
+        ChainHeadEntity entity = chainHeadRepository.findById((short) 1)
+                .orElseGet(() -> new ChainHeadEntity(head.sequence(), head.contentHash(), updatedAt));
+        entity.replace(head.sequence(), head.contentHash(), updatedAt);
+        chainHeadRepository.save(entity);
+    }
+
+    @Override
+    public Optional<ChainHead> findPublishedHead() {
+        return chainHeadRepository.findById((short) 1)
+                .map(row -> new ChainHead(row.getSequenceNum(), row.getContentHash()));
     }
 
     @Override

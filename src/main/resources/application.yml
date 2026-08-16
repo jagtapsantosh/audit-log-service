@@ -25,6 +25,10 @@ spring:
 
 server:
   port: 8080
+  tomcat:
+    max-http-form-post-size: 128KB
+    max-swallow-size: 128KB
+  max-http-request-header-size: 16KB
 
 management:
   endpoints:
@@ -55,8 +59,14 @@ audit:
       secret: ${AUDIT_JWT_SECRET:dev-only-hmac-secret-must-be-at-least-32-bytes!}
       ttl: 15m
       issuer: audit-log-service
+      # Production IdP: set AUDIT_JWK_SET_URI and disable the local token endpoint.
+      jwk-set-uri: ${AUDIT_JWK_SET_URI:}
+    export-signing-key: ${AUDIT_EXPORT_SIGNING_KEY:dev-only-export-signing-key-not-for-production!!}
+    local-token-endpoint: true
+    max-request-bytes: 131072
     rate-limit:
       token-per-minute: 10
+      write-per-minute: 120
     api-keys:
       - client-id: ingest-service
         # plaintext (README only): als_ingest_dev_key_do_not_use_in_prod
